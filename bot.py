@@ -149,9 +149,6 @@ def get_slack_user_id(discord_name):
             return member.get("id")
     return None
 
-
-client.run(DISCORD_TOKEN)
-
 from flask import Flask
 from threading import Thread
 
@@ -166,3 +163,5 @@ def run_flask():
 
 # Flaskを別スレッドで起動
 Thread(target=run_flask).start()
+
+client.run(DISCORD_TOKEN)
