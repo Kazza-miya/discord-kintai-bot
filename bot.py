@@ -2,6 +2,8 @@ import discord
 import datetime
 import time
 import uuid
+from flask import Flask
+from threading import Thread
 import requests
 import pytz
 
@@ -158,11 +160,14 @@ app = Flask(__name__)
 def health_check():
     return 'OK'
 
-def run_flask():
-    port = int(os.environ.get("PORT", 5000))  # ← Render用に修正
+def run_discord_bot():
+    client.run(DISCORD_TOKEN)
+
+if __name__ == '__main__':
+    Thread(target=run_discord_bot).start()
+
+    port = int(os.environ.get("PORT", 5000))  # RenderがPORTを指定してくる
     app.run(host='0.0.0.0', port=port)
 
-# Flaskを別スレッドで起動
-Thread(target=run_flask).start()
 
 client.run(DISCORD_TOKEN)
