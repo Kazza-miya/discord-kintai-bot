@@ -18,6 +18,29 @@ SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN')
 SLACK_CHANNEL_ID = os.getenv('SLACK_CHANNEL_ID')
 DAILY_REPORT_CHANNEL_ID = os.getenv('DAILY_REPORT_CHANNEL_ID')
 clock_in_times = {}  # ユーザーの出勤時刻を一時保存
+# スプレッドシート用Webhookマッピング　ここにドンドン増やしていく
+WEBHOOK_URLS = {
+    "宮内 和貴": "https://script.google.com/macros/s/AKfycbzle9GzA0nC_1v1S4M6rha85UCOoLsLNz0P7E4b6i44ItzIb4pMWHGmEzQtH2wQ7Gxm7A/exec",
+    "井上 璃久": "https://script.google.com/macros/s/AKfycbwKC8IH3tbN1cmaKjCsQCvqMiI3Fuf5XDarB3djgX1LsWpco8a8x-sTpnpve50pAHYBpg/exec"
+}
+
+def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_duration=None):
+    webhook_url = WEBHOOK_URLS.get(name)
+    if not webhook_url:
+        print(f"Webhook URL が未設定: {name}")
+        return
+    try:
+        payload = {
+            "date": datetime.datetime.now(JST).strftime("%Y-%m-%d"),
+            "status": status,
+            "clock_in": clock_in.strftime("%H:%M:%S") if clock_in else "",
+            "clock_out": clock_out.strftime("%H:%M:%S") if clock_out else "",
+            "work_duration": work_duration or ""
+        }
+        response = requests.post(webhook_url, json=payload)
+        print(f"Webhook送信: {response.status_code} → {name}")
+    except Exception as e:
+        print(f"スプレッドシート送信失敗 → {name}: {e}")
 
 intents = discord.Intents.default()
 intents.voice_states = True
@@ -86,7 +109,7 @@ async def on_voice_state_update(member, before, after):
         clock_in_times[name] = now
         msg = f"{name} が「{after.channel.name}」に出勤しました。\n出勤時間\n{timestamp}"
         send_slack_message(msg)
-
+        send_to_spreadsheet(name, status="出勤", clock_in=now)
     # 移動
     elif before.channel and after.channel and before.channel != after.channel:
         msg = f"{name} が「{after.channel.name}」に移動しました。"
@@ -130,7 +153,7 @@ async def on_voice_state_update(member, before, after):
 
         # 出勤記録を削除
         clock_in_times.pop(name, None)
-
+        send_to_spreadsheet(name, status="退勤", clock_in=clock_in, clock_out=clock_out, work_duration=work_duration)
 
 def get_slack_user_id(discord_name):
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
