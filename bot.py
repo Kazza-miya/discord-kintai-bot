@@ -159,7 +159,8 @@ def health_check():
     return 'OK'
 
 def run_flask():
-    app.run(host='0.0.0.0', port=10000)
+    port = int(os.environ.get("PORT", 5000))  # ← Render用に修正
+    app.run(host='0.0.0.0', port=port)
 
 # Flaskを別スレッドで起動
 Thread(target=run_flask).start()
