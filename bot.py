@@ -104,7 +104,7 @@ async def on_voice_state_update(member, before, after):
 
             # メンションせず、普通の退勤メッセージを投稿（親スレッド）
         unique_id = str(uuid.uuid4())[:8]  # 投稿をユニークにするID
-        msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}\n\n勤務時間\n{work_duration}]"
+        msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}\n\n勤務時間\n{work_duration}"
         result = send_slack_message(msg, mention_user_id=None)
 
         # 少し待ってからスレッド返信（Slackが投稿を反映するのを待つ）
