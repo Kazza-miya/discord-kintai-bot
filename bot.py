@@ -163,11 +163,11 @@ def health_check():
 def run_discord_bot():
     client.run(DISCORD_TOKEN)
 
-@app.before_serving
-def start_bot():
-    Thread(target=client.run, args=(DISCORD_TOKEN,)).start()
-
-
 if __name__ == '__main__':
+    # Discord Bot を別スレッドで起動
+    Thread(target=run_discord_bot).start()
+
+    # Flask（Render用のWebサーバ）
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+
