@@ -163,11 +163,10 @@ def health_check():
 def run_discord_bot():
     client.run(DISCORD_TOKEN)
 
+@app.before_first_request
+def start_bot():
+    Thread(target=client.run, args=(DISCORD_TOKEN,)).start()
+
 if __name__ == '__main__':
-    Thread(target=run_discord_bot).start()
-
-    port = int(os.environ.get("PORT", 5000))  # RenderがPORTを指定してくる
+    port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
-
-
-client.run(DISCORD_TOKEN)
