@@ -48,6 +48,7 @@ intents.members = True
 
 client = discord.Client(intents=intents)
 
+last_events = {}  # ← これを def normalize() の上などに追加
 
 def normalize(name):
     if not name:
@@ -99,10 +100,29 @@ def debug_slack_users():
 
 @client.event
 async def on_voice_state_update(member, before, after):
-    now = datetime.datetime.now()
-    name = member.display_name
     now = datetime.datetime.now(JST)
+    name = member.display_name
     timestamp = now.strftime("%Y/%m/%d %H:%M:%S")
+
+    # イベント種別を判定
+    event_type = None
+    if not before.channel and after.channel:
+        event_type = "clock_in"
+    elif before.channel and not after.channel:
+        event_type = "clock_out"
+    elif before.channel and after.channel and before.channel != after.channel:
+        event_type = "move"
+
+    if not event_type:
+        return
+
+    # ↓↓↓ ここが重複防止（5秒以内の同一ユーザー＆イベントは無視）
+    key = f"{name}-{event_type}"
+    last_time = last_events.get(key)
+    if last_time and (now - last_time).total_seconds() < 5:
+        return  # スキップ
+    last_events[key] = now  # 実行記録を保存
+
 
     # 出勤
     if not before.channel and after.channel:
@@ -193,4 +213,33 @@ if __name__ == '__main__':
     # Flask（Render用のWebサーバ）
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+
+# 重複防止用
+last_events = {}
+
+@client.event
+async def on_voice_state_update(member, before, after):
+    now = datetime.datetime.now(JST)
+    name = member.display_name
+    timestamp = now.strftime("%Y/%m/%d %H:%M:%S")
+
+    # イベント種別判定
+    event_type = None
+    if not before.channel and after.channel:
+        event_type = "clock_in"
+    elif before.channel and not after.channel:
+        event_type = "clock_out"
+    elif before.channel and after.channel and before.channel != after.channel:
+        event_type = "move"
+
+    if not event_type:
+        return
+
+    # 重複チェック
+    key = f"{name}-{event_type}"
+    last_time = last_events.get(key)
+    if last_time and (now - last_time).total_seconds() < 5:
+        return  # 5秒以内の重複は無視
+
+    last_events[key] = now  # 更新
 
