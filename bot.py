@@ -163,9 +163,10 @@ def health_check():
 def run_discord_bot():
     client.run(DISCORD_TOKEN)
 
-@app.before_first_request
+@app.before_serving
 def start_bot():
     Thread(target=client.run, args=(DISCORD_TOKEN,)).start()
+
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
