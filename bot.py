@@ -31,6 +31,7 @@ def format_duration(seconds):
     return f"{hours:02d}:{minutes:02d}"
 
 def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_duration=None, rest_duration=None):
+    print(f"[SEND] Spreadsheet: {name} - {status}")
     webhook_url = WEBHOOK_URLS.get(name)
     if not webhook_url:
         print(f"Webhook URL が未設定: {name}")
@@ -67,6 +68,7 @@ def send_slack_message(text,
                        mention_user_id=None,
                        thread_ts=None,
                        use_daily_channel=False):
+                           print(f"[SEND] Slack message: {text[:50]}...")  # 長文は切る
     headers = {
         "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
         "Content-Type": "application/json"
@@ -112,6 +114,10 @@ async def on_voice_state_update(member, before, after):
     now = datetime.datetime.now(JST)
     name = member.display_name
     timestamp = now.strftime("%Y/%m/%d %H:%M:%S")
+    print(f"[LOG] Voice state update: {name}")
+    print(f"[LOG] Before channel: {before.channel.name if before.channel else 'None'}")
+    print(f"[LOG] After channel: {after.channel.name if after.channel else 'None'}")
+
     # イベント種別を判定
     event_type = None
     if not before.channel and after.channel:
@@ -120,17 +126,22 @@ async def on_voice_state_update(member, before, after):
         event_type = "clock_out"
     elif before.channel and after.channel and before.channel != after.channel:
         event_type = "move"
-    
+    print(f"[LOG] Event type: {event_type}")
     # 🔒 None のまま処理しないようにする（順番入れ替え）
     if not event_type:
         return
     
     # 多重発火対策（ここで使う）
     event_key = f"{member.id}-{event_type}"
-    if event_key in last_events:
-        if (now - last_events[event_key]).total_seconds() < 5:
-            return
-    last_events[event_key] = now
+    last_time = last_events.get(event_key)
+    if last_time:
+        delta = (now - last_time).total_seconds()
+        print(f"[LOG] Last event delta for {event_key}: {delta:.2f}秒前")
+
+    if event_key in last_events and delta < 5:
+        print(f"[SKIP] {name} の {event_type} をスキップ（5秒ルール）")
+        return
+
 
 
     # ↓↓↓ ここが重複防止（5秒以内の同一ユーザー＆イベントは無視）
