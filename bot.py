@@ -24,6 +24,11 @@ WEBHOOK_URLS = {
     "宮内 和貴 / Kazuki Miyauchi": "https://script.google.com/macros/s/AKfycbzle9GzA0nC_1v1S4M6rha85UCOoLsLNz0P7E4b6i44ItzIb4pMWHGmEzQtH2wQ7Gxm7A/exec",
     "井上 璃久": "https://script.google.com/macros/s/AKfycbwKC8IH3tbN1cmaKjCsQCvqMiI3Fuf5XDarB3djgX1LsWpco8a8x-sTpnpve50pAHYBpg/exec"
 }
+def format_duration(seconds):
+    minutes = int(seconds // 60)
+    hours = minutes // 60
+    minutes = minutes % 60
+    return f"{hours:02d}:{minutes:02d}"
 
 def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_duration=None, rest_duration=None):
     webhook_url = WEBHOOK_URLS.get(name)
@@ -145,6 +150,18 @@ async def on_voice_state_update(member, before, after):
         clock_in_times[name] = now
         msg = f"{name} が「{after.channel.name}」に出勤しました。\n出勤時間\n{timestamp}"
         send_slack_message(msg)
+        
+        last_key = f"{name}-出勤"
+        last_sent = last_sheet_events.get(last_key)
+        if last_sent and (now - last_sent).total_seconds() < 60:
+            print("スプレッドシートへの重複送信をスキップ（出勤）:", name)
+        else:
+            send_to_spreadsheet(
+                name=name,
+                status="出勤",
+                clock_in=now
+            )
+            last_sheet_events[last_key] = now
 
     # 移動
     elif before.channel and after.channel and before.channel != after.channel:
@@ -164,7 +181,7 @@ async def on_voice_state_update(member, before, after):
         if clock_in:
             delta = clock_out - clock_in
             work_sec = int(delta.total_seconds() - rest_sec)
-            work_duration = str(datetime.timedelta(seconds=max(work_sec, 0)))
+            work_duration = max(work_sec, 0)  # 秒数として保持
             rest_duration = rest_sec
         # 退勤処理の最後で送信前にチェック
         last_key = f"{name}-退勤"
@@ -177,8 +194,8 @@ async def on_voice_state_update(member, before, after):
                 status="退勤",
                 clock_in=clock_in,
                 clock_out=clock_out,
-                work_duration=work_duration,
-                rest_duration=rest_duration
+                work_duration: format_duration(work_duration) if isinstance(work_duration, (int, float)) else work_duration or "",
+                rest_duration: format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else rest_duration or ""
             )
             last_sheet_events[last_key] = now
         
