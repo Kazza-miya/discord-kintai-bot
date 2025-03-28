@@ -24,21 +24,6 @@ WEBHOOK_URLS = {
     "宮内 和貴 / Kazuki Miyauchi": "https://script.google.com/macros/s/AKfycbzle9GzA0nC_1v1S4M6rha85UCOoLsLNz0P7E4b6i44ItzIb4pMWHGmEzQtH2wQ7Gxm7A/exec",
     "井上 璃久": "https://script.google.com/macros/s/AKfycbwKC8IH3tbN1cmaKjCsQCvqMiI3Fuf5XDarB3djgX1LsWpco8a8x-sTpnpve50pAHYBpg/exec"
 }
-# 退勤処理の最後で送信前にチェック
-last_key = f"{name}-退勤"
-last_sent = last_sheet_events.get(last_key)
-if last_sent and (now - last_sent).total_seconds() < 60:
-    print("スプレッドシートへの重複送信をスキップ:", name)
-else:
-    send_to_spreadsheet(
-        name=name,
-        status="退勤",
-        clock_in=clock_in,
-        clock_out=clock_out,
-        work_duration=work_duration,
-        rest_duration=rest_duration
-    )
-    last_sheet_events[last_key] = now
 
 def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_duration=None, rest_duration=None):
     webhook_url = WEBHOOK_URLS.get(name)
@@ -168,6 +153,8 @@ async def on_voice_state_update(member, before, after):
 
     # 退勤
     if before.channel and not after.channel:
+        now = datetime.datetime.now(JST)  # ← 必須
+        name = member.display_name        # ← 必須
         clock_out = now
         clock_in = clock_in_times.get(name)
         rest_sec = rest_durations.pop(name, 0)
@@ -179,7 +166,22 @@ async def on_voice_state_update(member, before, after):
             work_sec = int(delta.total_seconds() - rest_sec)
             work_duration = str(datetime.timedelta(seconds=max(work_sec, 0)))
             rest_duration = rest_sec
-
+        # 退勤処理の最後で送信前にチェック
+        last_key = f"{name}-退勤"
+        last_sent = last_sheet_events.get(last_key)
+        if last_sent and (now - last_sent).total_seconds() < 60:
+            print("スプレッドシートへの重複送信をスキップ:", name)
+        else:
+            send_to_spreadsheet(
+                name=name,
+                status="退勤",
+                clock_in=clock_in,
+                clock_out=clock_out,
+                work_duration=work_duration,
+                rest_duration=rest_duration
+            )
+            last_sheet_events[last_key] = now
+        
         # 退勤メッセージ作成（ここで msg を定義）
         msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}"
         if work_duration != "不明（出勤情報なし）":
@@ -203,16 +205,6 @@ async def on_voice_state_update(member, before, after):
     
         # 出勤記録削除
         clock_in_times.pop(name, None)
-    
-        # スプレッドシート転記
-        send_to_spreadsheet(
-            name=name,
-            status="退勤",
-            clock_in=clock_in,
-            clock_out=clock_out,
-            work_duration=work_duration,
-            rest_duration=rest_duration
-        )
 
 def get_slack_user_id(discord_name):
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
