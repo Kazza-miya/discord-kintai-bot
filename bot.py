@@ -12,6 +12,7 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
+last_sheet_events = {}  # ユーザーごとに最後に送信した時刻を記録
 
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN')
@@ -23,6 +24,21 @@ WEBHOOK_URLS = {
     "宮内 和貴 / Kazuki Miyauchi": "https://script.google.com/macros/s/AKfycbzle9GzA0nC_1v1S4M6rha85UCOoLsLNz0P7E4b6i44ItzIb4pMWHGmEzQtH2wQ7Gxm7A/exec",
     "井上 璃久": "https://script.google.com/macros/s/AKfycbwKC8IH3tbN1cmaKjCsQCvqMiI3Fuf5XDarB3djgX1LsWpco8a8x-sTpnpve50pAHYBpg/exec"
 }
+# 退勤処理の最後で送信前にチェック
+last_key = f"{name}-退勤"
+last_sent = last_sheet_events.get(last_key)
+if last_sent and (now - last_sent).total_seconds() < 60:
+    print("スプレッドシートへの重複送信をスキップ:", name)
+else:
+    send_to_spreadsheet(
+        name=name,
+        status="退勤",
+        clock_in=clock_in,
+        clock_out=clock_out,
+        work_duration=work_duration,
+        rest_duration=rest_duration
+    )
+    last_sheet_events[last_key] = now
 
 def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_duration=None, rest_duration=None):
     webhook_url = WEBHOOK_URLS.get(name)
