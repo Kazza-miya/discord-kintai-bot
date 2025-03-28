@@ -97,13 +97,15 @@ def debug_slack_users():
         )
     print("--- [ここまで] ---\n")
 
+rest_start_times = {}   # 休憩室に入った時刻
+rest_durations = {}     # 休憩の累計時間（秒）
 
 @client.event
 async def on_voice_state_update(member, before, after):
     now = datetime.datetime.now(JST)
     name = member.display_name
     timestamp = now.strftime("%Y/%m/%d %H:%M:%S")
-
+    
     # イベント種別を判定
     event_type = None
     if not before.channel and after.channel:
@@ -122,6 +124,18 @@ async def on_voice_state_update(member, before, after):
     if last_time and (now - last_time).total_seconds() < 5:
         return  # スキップ
     last_events[key] = now  # 実行記録を保存
+
+    # 休憩室に入ったら、開始時間を記録（何もしない）
+    if after.channel and after.channel.name == "休憩室":
+        rest_start_times[name] = now
+        return
+
+    # 休憩室から出たら、累積休憩時間に加算
+    if before.channel and before.channel.name == "休憩室":
+        start = rest_start_times.pop(name, None)
+        if start:
+            duration = (now - start).total_seconds()
+            rest_durations[name] = rest_durations.get(name, 0) + duration
 
 
     # 出勤
@@ -142,10 +156,12 @@ async def on_voice_state_update(member, before, after):
         work_duration = ""
         if clock_in:
             delta = clock_out - clock_in
-            work_duration = str(
-                datetime.timedelta(seconds=int(delta.total_seconds())))
+            rest_sec = rest_durations.pop(name, 0)  # 休憩時間を取得（なければ0）
+            work_sec = int(delta.total_seconds() - rest_sec)
+            work_duration = str(datetime.timedelta(seconds=max(work_sec, 0)))
         else:
             work_duration = "不明（出勤情報なし）"
+
 
             # メンションせず、普通の退勤メッセージを投稿（親スレッド）
         unique_id = str(uuid.uuid4())[:8]  # 投稿をユニークにするID
