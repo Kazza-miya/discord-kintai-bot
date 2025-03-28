@@ -24,7 +24,7 @@ WEBHOOK_URLS = {
     "井上 璃久": "https://script.google.com/macros/s/AKfycbwKC8IH3tbN1cmaKjCsQCvqMiI3Fuf5XDarB3djgX1LsWpco8a8x-sTpnpve50pAHYBpg/exec"
 }
 
-def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_duration=None):
+def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_duration=None, rest_duration=None):
     webhook_url = WEBHOOK_URLS.get(name)
     if not webhook_url:
         print(f"Webhook URL が未設定: {name}")
@@ -35,7 +35,8 @@ def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_durati
             "status": status,
             "clock_in": clock_in.strftime("%H:%M:%S") if clock_in else "",
             "clock_out": clock_out.strftime("%H:%M:%S") if clock_out else "",
-            "work_duration": work_duration or ""
+            "work_duration": work_duration or "",
+            "rest_duration": str(datetime.timedelta(seconds=int(rest_duration))) if rest_duration else ""
         }
         response = requests.post(webhook_url, json=payload)
         print(f"Webhook送信: {response.status_code} → {name}")
@@ -156,9 +157,10 @@ async def on_voice_state_update(member, before, after):
         work_duration = ""
         if clock_in:
             delta = clock_out - clock_in
-            rest_sec = rest_durations.pop(name, 0)  # 休憩時間を取得（なければ0）
+            rest_sec = rest_durations.pop(name, 0)
             work_sec = int(delta.total_seconds() - rest_sec)
             work_duration = str(datetime.timedelta(seconds=max(work_sec, 0)))
+            rest_duration = rest_sec
         else:
             work_duration = "不明（出勤情報なし）"
 
@@ -189,7 +191,14 @@ async def on_voice_state_update(member, before, after):
 
         # 出勤記録を削除
         clock_in_times.pop(name, None)
-        send_to_spreadsheet(name, status="退勤", clock_in=clock_in, clock_out=clock_out, work_duration=work_duration)
+        send_to_spreadsheet(
+            name,
+            status="退勤",
+            clock_in=clock_in,
+            clock_out=clock_out,
+            work_duration=work_duration,
+            rest_duration=rest_duration
+        )
 
 def get_slack_user_id(discord_name):
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
