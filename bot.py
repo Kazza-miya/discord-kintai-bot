@@ -222,23 +222,9 @@ async def on_voice_state_update(member, before, after):
         msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}"
         if isinstance(work_duration, (int, float)):
             msg += f"\n\n勤務時間\n{format_duration(work_duration)}"
-    
-        send_slack_message(msg)
         
-    # スレッド返信（Slack投稿反映待ち）
-    time.sleep(3)
-    slack_user_id = get_slack_user_id(name)
-    thread_msg = (f"<@{slack_user_id}>\n"
-                  f"以下のテンプレを <#{DAILY_REPORT_CHANNEL_ID}> に記載してください：\n"
-                  "◆日報一言テンプレート\n"
-                  "やったこと\n・\n次にやること\n・\nひとこと\n・")
-    
-    # Slackに投稿したメッセージにスレッドで返信
-    result_ts = send_slack_message(msg)
-    if result_ts:
-        send_slack_message(thread_msg, thread_ts=result_ts, use_daily_channel=False)
-    else:
-        send_slack_message(thread_msg, use_daily_channel=False)
+        # Slackに投稿 → ts を取得
+        result_ts = send_slack_message(msg)
         
         # スプレッドシート
         send_to_spreadsheet(
@@ -249,9 +235,20 @@ async def on_voice_state_update(member, before, after):
             work_duration=format_duration(work_duration) if isinstance(work_duration, (int, float)) else (work_duration or ""),
             rest_duration=format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else (rest_duration or "")
         )
-    
+        
+        # スレッド返信（日報テンプレ）
+        if result_ts:
+            time.sleep(3)
+            slack_user_id = get_slack_user_id(name)
+            thread_msg = (f"<@{slack_user_id}>\n"
+                          f"以下のテンプレを <#{DAILY_REPORT_CHANNEL_ID}> に記載してください：\n"
+                          "◆日報一言テンプレート\n"
+                          "やったこと\n・\n次にやること\n・\nひとこと\n・")
+            send_slack_message(thread_msg, thread_ts=result_ts, use_daily_channel=False)
+        
         # 出勤記録削除
         clock_in_times.pop(name, None)
+
 
 def get_slack_user_id(discord_name):
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
