@@ -154,10 +154,16 @@ async def on_voice_state_update(member, before, after):
 
 
     # 出勤
-    if not before.channel and after.channel:
-        clock_in_times[name] = now
-        msg = f"{name} が「{after.channel.name}」に出勤しました。\n出勤時間\n{timestamp}"
-        send_slack_message(msg)
+    if event_type == "clock_in":
+        if name not in clock_in_times:
+            clock_in_times[name] = now
+            last_key = f"{name}-出勤"
+            last_sent = last_sheet_events.get(last_key)
+            if not last_sent or (now - last_sent).total_seconds() >= 60:
+                msg = f"{name} が「{after.channel.name}」に出勤しました。\n出勤時間\n{timestamp}"
+                send_slack_message(msg)
+                last_sheet_events[last_key] = now
+
         
         last_key = f"{name}-出勤"
         last_sent = last_sheet_events.get(last_key)
@@ -171,8 +177,8 @@ async def on_voice_state_update(member, before, after):
         #     )
             last_sheet_events[last_key] = now
 
-    # 移動
-    elif before.channel and after.channel and before.channel != after.channel:
+    # 移動（出勤ではない時のみ）
+    elif event_type == "move" and name in clock_in_times:
         msg = f"{name} が「{after.channel.name}」に移動しました。"
         send_slack_message(msg)
 
@@ -194,18 +200,22 @@ async def on_voice_state_update(member, before, after):
         # 退勤処理の最後で送信前にチェック
         last_key = f"{name}-退勤"
         last_sent = last_sheet_events.get(last_key)
+        
+        # 60秒以内に退勤処理がされたらスキップ
         if last_sent and (now - last_sent).total_seconds() < 60:
-            print("スプレッドシートへの重複送信をスキップ:", name)
-        else:
-            send_to_spreadsheet(
-                name=name,
-                status="退勤",
-                clock_in=clock_in,
-                clock_out=clock_out,
-                work_duration=format_duration(work_duration) if isinstance(work_duration, (int, float)) else (work_duration or ""),
-                rest_duration=format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else (rest_duration or "")
-            )
-            last_sheet_events[last_key] = now
+            print("退勤の重複送信をスキップ:", name)
+            return
+        last_sheet_events[last_key] = now
+
+        send_to_spreadsheet(
+            name=name,
+            status="退勤",
+            clock_in=clock_in,
+            clock_out=clock_out,
+            work_duration=format_duration(work_duration) if isinstance(work_duration, (int, float)) else (work_duration or ""),
+            rest_duration=format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else (rest_duration or "")
+        )
+        last_sheet_events[last_key] = now
         
         # ↓ 退勤メッセージ生成部の微調整
         msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}"
@@ -213,10 +223,10 @@ async def on_voice_state_update(member, before, after):
         # 勤務時間が取得できた場合のみ
         if isinstance(work_duration, (int, float)):
             formatted_work_duration = format_duration(work_duration)
-            msg += f"\n\n勤務時間\n{formatted_work_duration}"
-        elif isinstance(work_duration, str) and work_duration:
-            msg += f"\n\n勤務時間\n{work_duration}"
-
+        else:
+            formatted_work_duration = work_duration or ""
+        
+        msg += f"\n\n勤務時間\n{formatted_work_duration}"
             
         # Slackに通知
         result = send_slack_message(msg, mention_user_id=None)
