@@ -68,7 +68,7 @@ def send_slack_message(text,
                        mention_user_id=None,
                        thread_ts=None,
                        use_daily_channel=False):
-                           print(f"[SEND] Slack message: {text[:50]}...")  # 長文は切る
+    print(f"[SEND] Slack message: {text[:50]}...")  # 長文は切る
     headers = {
         "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
         "Content-Type": "application/json"
