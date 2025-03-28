@@ -24,6 +24,13 @@ WEBHOOK_URLS = {
     "宮内 和貴 / Kazuki Miyauchi": "https://script.google.com/macros/s/AKfycbzle9GzA0nC_1v1S4M6rha85UCOoLsLNz0P7E4b6i44ItzIb4pMWHGmEzQtH2wQ7Gxm7A/exec",
     "井上 璃久": "https://script.google.com/macros/s/AKfycbwKC8IH3tbN1cmaKjCsQCvqMiI3Fuf5XDarB3djgX1LsWpco8a8x-sTpnpve50pAHYBpg/exec"
 }
+import hashlib
+
+# 🔒 多重発火防止: イベント内容のハッシュを作る
+def generate_event_hash(user_id, event_type, channel_name, timestamp):
+    raw = f"{user_id}-{event_type}-{channel_name}-{timestamp.strftime('%Y%m%d%H%M%S')}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
 def format_duration(seconds):
     minutes = int(seconds // 60)
     hours = minutes // 60
@@ -119,6 +126,7 @@ async def on_voice_state_update(member, before, after):
     print(f"[LOG] After channel: {after.channel.name if after.channel else 'None'}")
 
     # イベント種別を判定
+   # イベント種別を判定
     event_type = None
     if not before.channel and after.channel:
         event_type = "clock_in"
@@ -126,30 +134,29 @@ async def on_voice_state_update(member, before, after):
         event_type = "clock_out"
     elif before.channel and after.channel and before.channel != after.channel:
         event_type = "move"
-    print(f"[LOG] Event type: {event_type}")
-    # 🔒 None のまま処理しないようにする（順番入れ替え）
+    
     if not event_type:
         return
     
-    # 多重発火対策（ここで使う）
+    # 🔒 多重通知防止ロジック
     event_key = f"{member.id}-{event_type}"
-    last_time = last_events.get(event_key)
-    if last_time:
-        delta = (now - last_time).total_seconds()
-        print(f"[LOG] Last event delta for {event_key}: {delta:.2f}秒前")
+    channel_name = after.channel.name if after.channel else (before.channel.name if before.channel else "None")
+    event_hash = generate_event_hash(member.id, event_type, channel_name, now)
+    
+    last_record = last_events.get(event_key)
+    if last_record:
+        delta = (now - last_record["timestamp"]).total_seconds()
+        if delta < 10 and last_record["event_hash"] == event_hash:
+            print(f"[SKIP] 多重通知防止: {event_key} within {delta:.2f}s")
+            return
+    
+    # 記録更新
+    last_events[event_key] = {
+        "timestamp": now,
+        "channel": channel_name,
+        "event_hash": event_hash
+    }
 
-    if event_key in last_events and delta < 5:
-        print(f"[SKIP] {name} の {event_type} をスキップ（5秒ルール）")
-        return
-
-
-
-    # ↓↓↓ ここが重複防止（5秒以内の同一ユーザー＆イベントは無視）
-    # key = f"{name}-{event_type}"
-    # last_time = last_events.get(key)
-    # if last_time and (now - last_time).total_seconds() < 5:
-    #     return  # スキップ
-    # last_events[key] = now  # 実行記録を保存
 
     # 休憩室に入ったら、開始時間を記録（何もしない）
     if after.channel and after.channel.name == "休憩室":
@@ -166,14 +173,20 @@ async def on_voice_state_update(member, before, after):
 
     # 出勤
     if event_type == "clock_in":
-        if name not in clock_in_times:
+        if name not in clock_in_times and after.channel.name != "休憩室":
             clock_in_times[name] = now
             last_key = f"{name}-出勤"
             last_sent = last_sheet_events.get(last_key)
             if not last_sent or (now - last_sent).total_seconds() >= 60:
                 msg = f"{name} が「{after.channel.name}」に出勤しました。\n出勤時間\n{timestamp}"
                 send_slack_message(msg)
+                send_to_spreadsheet(
+                    name=name,
+                    status="出勤",
+                    clock_in=now
+                )
                 last_sheet_events[last_key] = now
+    
 
         
         last_key = f"{name}-出勤"
@@ -186,38 +199,36 @@ async def on_voice_state_update(member, before, after):
         #         status="出勤",
         #         clock_in=now
         #     )
-            last_sheet_events[last_key] = now
 
-    # 移動（出勤ではない時のみ）
-    elif event_type == "move" and name in clock_in_times:
-        msg = f"{name} が「{after.channel.name}」に移動しました。"
-        send_slack_message(msg)
+    # 移動（休憩室含む）
+    if event_type == "move":
+        if name in clock_in_times and before.channel != after.channel:
+            msg = f"{name} が「{after.channel.name}」に移動しました。"
+            send_slack_message(msg)
+
 
     # 退勤
-    if before.channel and not after.channel:
-        now = datetime.datetime.now(JST)  # ← 必須
-        name = member.display_name        # ← 必須
+    if event_type == "clock_out" and name in clock_in_times:
         clock_out = now
         clock_in = clock_in_times.get(name)
         rest_sec = rest_durations.pop(name, 0)
         rest_duration = 0
         work_duration = "不明（出勤情報なし）"
-
+    
         if clock_in:
             delta = clock_out - clock_in
             work_sec = int(delta.total_seconds() - rest_sec)
-            work_duration = max(work_sec, 0)  # 秒数として保持
+            work_duration = max(work_sec, 0)
             rest_duration = rest_sec
-        # 退勤処理の最後で送信前にチェック
-        last_key = f"{name}-退勤"
-        last_sent = last_sheet_events.get(last_key)
-        
-        # 60秒以内に退勤処理がされたらスキップ
-        if last_sent and (now - last_sent).total_seconds() < 60:
-            print("退勤の重複送信をスキップ:", name)
-            return
-        last_sheet_events[last_key] = now
-
+    
+        # 通知
+        msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}"
+        if isinstance(work_duration, (int, float)):
+            msg += f"\n\n勤務時間\n{format_duration(work_duration)}"
+    
+        send_slack_message(msg)
+    
+        # スプレッドシート
         send_to_spreadsheet(
             name=name,
             status="退勤",
@@ -226,37 +237,10 @@ async def on_voice_state_update(member, before, after):
             work_duration=format_duration(work_duration) if isinstance(work_duration, (int, float)) else (work_duration or ""),
             rest_duration=format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else (rest_duration or "")
         )
-        last_sheet_events[last_key] = now
-        
-        # ↓ 退勤メッセージ生成部の微調整
-        msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}"
-        
-        # 勤務時間が取得できた場合のみ
-        if isinstance(work_duration, (int, float)):
-            formatted_work_duration = format_duration(work_duration)
-        else:
-            formatted_work_duration = work_duration or ""
-        
-        msg += f"\n\n勤務時間\n{formatted_work_duration}"
-            
-        # Slackに通知
-        result = send_slack_message(msg, mention_user_id=None)
-    
-        # スレッド返信（Slack投稿反映待ち）
-        time.sleep(1.5)
-        slack_user_id = get_slack_user_id(name)
-        thread_msg = (f"<@{slack_user_id}>\n"
-                      f"以下のテンプレを <#{DAILY_REPORT_CHANNEL_ID}> に記載してください：\n"
-                      "◆日報一言テンプレート\n"
-                      "やったこと\n・\n次にやること\n・\nひとこと\n・")
-    
-        if result:
-            send_slack_message(thread_msg, thread_ts=result, use_daily_channel=False)
-        else:
-            send_slack_message(thread_msg, use_daily_channel=False)
     
         # 出勤記録削除
         clock_in_times.pop(name, None)
+
 
 def get_slack_user_id(discord_name):
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
