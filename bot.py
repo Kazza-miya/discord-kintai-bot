@@ -42,7 +42,7 @@ def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_durati
             "clock_in": clock_in.strftime("%H:%M:%S") if clock_in else "",
             "clock_out": clock_out.strftime("%H:%M:%S") if clock_out else "",
             "work_duration": work_duration or "",
-            "rest_duration": str(datetime.timedelta(seconds=int(rest_duration))) if rest_duration else ""
+            "rest_duration": format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else rest_duration or "",
         }
         response = requests.post(webhook_url, json=payload)
         print(f"Webhook送信: {response.status_code} → {name}")
@@ -112,8 +112,7 @@ async def on_voice_state_update(member, before, after):
     now = datetime.datetime.now(JST)
     name = member.display_name
     timestamp = now.strftime("%Y/%m/%d %H:%M:%S")
-    
-    # イベント種別を判定
+# イベント種別を判定
     event_type = None
     if not before.channel and after.channel:
         event_type = "clock_in"
@@ -121,9 +120,17 @@ async def on_voice_state_update(member, before, after):
         event_type = "clock_out"
     elif before.channel and after.channel and before.channel != after.channel:
         event_type = "move"
-
+    
     if not event_type:
         return
+    
+    # voice_state_updateの多重発火対策（全体で5秒制限）
+    event_key = f"{member.id}-{event_type}"
+    if event_key in last_events:
+        if (now - last_events[event_key]).total_seconds() < 5:
+            return
+    last_events[event_key] = now
+
 
     # ↓↓↓ ここが重複防止（5秒以内の同一ユーザー＆イベントは無視）
     key = f"{name}-{event_type}"
@@ -155,12 +162,12 @@ async def on_voice_state_update(member, before, after):
         last_sent = last_sheet_events.get(last_key)
         if last_sent and (now - last_sent).total_seconds() < 60:
             print("スプレッドシートへの重複送信をスキップ（出勤）:", name)
-        else:
-            send_to_spreadsheet(
-                name=name,
-                status="出勤",
-                clock_in=now
-            )
+        # else:
+        #     send_to_spreadsheet(
+        #         name=name,
+        #         status="出勤",
+        #         clock_in=now
+        #     )
             last_sheet_events[last_key] = now
 
     # 移動
