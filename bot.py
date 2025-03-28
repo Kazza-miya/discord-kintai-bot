@@ -28,7 +28,7 @@ import hashlib
 
 # 🔒 多重発火防止: イベント内容のハッシュを作る
 def generate_event_hash(user_id, event_type, channel_name, timestamp):
-    raw = f"{user_id}-{event_type}-{channel_name}-{timestamp.strftime('%Y%m%d%H%M%S')}"
+    raw = f"{user_id}-{event_type}-{channel_name}-{timestamp.strftime('%Y%m%d%H%M%S%f')}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 def format_duration(seconds):
@@ -146,9 +146,10 @@ async def on_voice_state_update(member, before, after):
     last_record = last_events.get(event_key)
     if last_record:
         delta = (now - last_record["timestamp"]).total_seconds()
-        if delta < 10 and last_record["event_hash"] == event_hash:
+        if delta < 3 and last_record["event_hash"] == event_hash:
             print(f"[SKIP] 多重通知防止: {event_key} within {delta:.2f}s")
             return
+
     
     # 記録更新
     last_events[event_key] = {
@@ -186,8 +187,6 @@ async def on_voice_state_update(member, before, after):
                     clock_in=now
                 )
                 last_sheet_events[last_key] = now
-    
-
         
         last_key = f"{name}-出勤"
         last_sent = last_sheet_events.get(last_key)
@@ -205,7 +204,6 @@ async def on_voice_state_update(member, before, after):
         if name in clock_in_times and before.channel != after.channel:
             msg = f"{name} が「{after.channel.name}」に移動しました。"
             send_slack_message(msg)
-
 
     # 退勤
     if event_type == "clock_out" and name in clock_in_times:
@@ -240,7 +238,6 @@ async def on_voice_state_update(member, before, after):
     
         # 出勤記録削除
         clock_in_times.pop(name, None)
-
 
 def get_slack_user_id(discord_name):
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
