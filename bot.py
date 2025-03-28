@@ -243,10 +243,7 @@ async def on_voice_state_update(member, before, after):
             work_duration=format_duration(work_duration) if isinstance(work_duration, (int, float)) else (work_duration or ""),
             rest_duration=format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else (rest_duration or "")
         )
-        
-        # --- 退勤通知 & スレッド返信 ---
-        result_ts = send_slack_message(msg)
-        
+                
         # 日報テンプレートは退勤時だけ送る
         if result_ts:
             time.sleep(2)
