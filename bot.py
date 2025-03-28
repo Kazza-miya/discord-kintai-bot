@@ -112,7 +112,7 @@ async def on_voice_state_update(member, before, after):
     now = datetime.datetime.now(JST)
     name = member.display_name
     timestamp = now.strftime("%Y/%m/%d %H:%M:%S")
-# イベント種別を判定
+    # イベント種別を判定
     event_type = None
     if not before.channel and after.channel:
         event_type = "clock_in"
@@ -121,10 +121,11 @@ async def on_voice_state_update(member, before, after):
     elif before.channel and after.channel and before.channel != after.channel:
         event_type = "move"
     
+    # 🔒 None のまま処理しないようにする（順番入れ替え）
     if not event_type:
         return
     
-    # voice_state_updateの多重発火対策（全体で5秒制限）
+    # 多重発火対策（ここで使う）
     event_key = f"{member.id}-{event_type}"
     if event_key in last_events:
         if (now - last_events[event_key]).total_seconds() < 5:
@@ -133,11 +134,11 @@ async def on_voice_state_update(member, before, after):
 
 
     # ↓↓↓ ここが重複防止（5秒以内の同一ユーザー＆イベントは無視）
-    key = f"{name}-{event_type}"
-    last_time = last_events.get(key)
-    if last_time and (now - last_time).total_seconds() < 5:
-        return  # スキップ
-    last_events[key] = now  # 実行記録を保存
+    # key = f"{name}-{event_type}"
+    # last_time = last_events.get(key)
+    # if last_time and (now - last_time).total_seconds() < 5:
+    #     return  # スキップ
+    # last_events[key] = now  # 実行記録を保存
 
     # 休憩室に入ったら、開始時間を記録（何もしない）
     if after.channel and after.channel.name == "休憩室":
@@ -206,11 +207,17 @@ async def on_voice_state_update(member, before, after):
             )
             last_sheet_events[last_key] = now
         
-        # 退勤メッセージ作成（ここで msg を定義）
+        # ↓ 退勤メッセージ生成部の微調整
         msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}"
-        if work_duration != "不明（出勤情報なし）":
+        
+        # 勤務時間が取得できた場合のみ
+        if isinstance(work_duration, (int, float)):
+            formatted_work_duration = format_duration(work_duration)
+            msg += f"\n\n勤務時間\n{formatted_work_duration}"
+        elif isinstance(work_duration, str) and work_duration:
             msg += f"\n\n勤務時間\n{work_duration}"
-    
+
+            
         # Slackに通知
         result = send_slack_message(msg, mention_user_id=None)
     
