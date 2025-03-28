@@ -144,55 +144,53 @@ async def on_voice_state_update(member, before, after):
         clock_in_times[name] = now
         msg = f"{name} が「{after.channel.name}」に出勤しました。\n出勤時間\n{timestamp}"
         send_slack_message(msg)
-        send_to_spreadsheet(name, status="出勤", clock_in=now)
+
     # 移動
     elif before.channel and after.channel and before.channel != after.channel:
         msg = f"{name} が「{after.channel.name}」に移動しました。"
         send_slack_message(msg)
 
     # 退勤
-    elif before.channel and not after.channel:
+    if before.channel and not after.channel:
         clock_out = now
         clock_in = clock_in_times.get(name)
-        work_duration = ""
+        rest_sec = rest_durations.pop(name, 0)
+        rest_duration = 0
+        work_duration = "不明（出勤情報なし）"
+
         if clock_in:
             delta = clock_out - clock_in
-            rest_sec = rest_durations.pop(name, 0)
             work_sec = int(delta.total_seconds() - rest_sec)
             work_duration = str(datetime.timedelta(seconds=max(work_sec, 0)))
             rest_duration = rest_sec
-        else:
-            work_duration = "不明（出勤情報なし）"
 
-
-            # メンションせず、普通の退勤メッセージを投稿（親スレッド）
-        unique_id = str(uuid.uuid4())[:8]  # 投稿をユニークにするID
-        msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}\n\n勤務時間\n{work_duration}"
+        # 退勤メッセージ作成（ここで msg を定義）
+        msg = f"{name} が「{before.channel.name}」を退出しました。\n退勤時間\n{timestamp}"
+        if work_duration != "不明（出勤情報なし）":
+            msg += f"\n\n勤務時間\n{work_duration}"
+    
+        # Slackに通知
         result = send_slack_message(msg, mention_user_id=None)
-
-        # 少し待ってからスレッド返信（Slackが投稿を反映するのを待つ）
+    
+        # スレッド返信（Slack投稿反映待ち）
         time.sleep(1.5)
-
-        # SlackのユーザーIDを取得して、スレッド側でメンション付きテンプレを作成
         slack_user_id = get_slack_user_id(name)
         thread_msg = (f"<@{slack_user_id}>\n"
                       f"以下のテンプレを <#{DAILY_REPORT_CHANNEL_ID}> に記載してください：\n"
                       "◆日報一言テンプレート\n"
                       "やったこと\n・\n次にやること\n・\nひとこと\n・")
-
-        # スレッド投稿（Bot名義）
+    
         if result:
-            send_slack_message(thread_msg,
-                               thread_ts=result,
-                               use_daily_channel=False)
+            send_slack_message(thread_msg, thread_ts=result, use_daily_channel=False)
         else:
-            # 念のため通常投稿（スレッドなし）に fallback
             send_slack_message(thread_msg, use_daily_channel=False)
-
-        # 出勤記録を削除
+    
+        # 出勤記録削除
         clock_in_times.pop(name, None)
+    
+        # スプレッドシート転記
         send_to_spreadsheet(
-            name,
+            name=name,
             status="退勤",
             clock_in=clock_in,
             clock_out=clock_out,
