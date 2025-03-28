@@ -199,10 +199,18 @@ async def on_voice_state_update(member, before, after):
         #     )
 
     # 移動（休憩室含む）
-    if event_type == "move":
-        if name in clock_in_times and before.channel != after.channel:
-            msg = f"{name} が「{after.channel.name}」に移動しました。"
-            send_slack_message(msg)
+        if event_type == "move":
+            if name in clock_in_times and before.channel != after.channel:
+                # 多重通知防止（移動にも適用）
+                last_key = f"{name}-move"
+                last_sent = last_sheet_events.get(last_key)
+                if last_sent and (now - last_sent).total_seconds() < 3:
+                    print(f"[SKIP] 移動の重複通知をスキップ: {name}")
+                    return
+                last_sheet_events[last_key] = now
+        
+                msg = f"{name} が「{after.channel.name}」に移動しました。"
+                send_slack_message(msg)
 
     # 退勤
     if event_type == "clock_out" and name in clock_in_times:
@@ -236,9 +244,12 @@ async def on_voice_state_update(member, before, after):
             rest_duration=format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else (rest_duration or "")
         )
         
-        # スレッド返信（日報テンプレ）
+        # --- 退勤通知 & スレッド返信 ---
+        result_ts = send_slack_message(msg)
+        
+        # 日報テンプレートは退勤時だけ送る
         if result_ts:
-            time.sleep(3)
+            time.sleep(2)
             slack_user_id = get_slack_user_id(name)
             thread_msg = (f"<@{slack_user_id}>\n"
                           f"以下のテンプレを <#{DAILY_REPORT_CHANNEL_ID}> に記載してください：\n"
@@ -246,6 +257,7 @@ async def on_voice_state_update(member, before, after):
                           "やったこと\n・\n次にやること\n・\nひとこと\n・")
             send_slack_message(thread_msg, thread_ts=result_ts, use_daily_channel=False)
         
+                
         # 出勤記録削除
         clock_in_times.pop(name, None)
 
