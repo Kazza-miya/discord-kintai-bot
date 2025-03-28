@@ -194,8 +194,8 @@ async def on_voice_state_update(member, before, after):
                 status="退勤",
                 clock_in=clock_in,
                 clock_out=clock_out,
-                work_duration: format_duration(work_duration) if isinstance(work_duration, (int, float)) else work_duration or "",
-                rest_duration: format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else rest_duration or ""
+                work_duration=format_duration(work_duration) if isinstance(work_duration, (int, float)) else (work_duration or ""),
+                rest_duration=format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else (rest_duration or "")
             )
             last_sheet_events[last_key] = now
         
