@@ -199,18 +199,18 @@ async def on_voice_state_update(member, before, after):
         #     )
 
     # 移動（休憩室含む）
-        if event_type == "move":
-            if name in clock_in_times and before.channel != after.channel:
-                # 多重通知防止（移動にも適用）
-                last_key = f"{name}-move"
-                last_sent = last_sheet_events.get(last_key)
-                if last_sent and (now - last_sent).total_seconds() < 3:
-                    print(f"[SKIP] 移動の重複通知をスキップ: {name}")
-                    return
-                last_sheet_events[last_key] = now
-        
-                msg = f"{name} が「{after.channel.name}」に移動しました。"
-                send_slack_message(msg)
+    elif event_type == "move":
+        if name in clock_in_times and before.channel != after.channel:
+            # 多重通知防止（移動にも適用）
+            last_key = f"{name}-move"
+            last_sent = last_sheet_events.get(last_key)
+            if last_sent and (now - last_sent).total_seconds() < 3:
+                print(f"[SKIP] 移動の重複通知をスキップ: {name}")
+                return
+            last_sheet_events[last_key] = now
+    
+            msg = f"{name} が「{after.channel.name}」に移動しました。"
+            send_slack_message(msg)
 
     # 退勤
     if event_type == "clock_out" and name in clock_in_times:
