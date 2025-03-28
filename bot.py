@@ -162,7 +162,6 @@ async def on_voice_state_update(member, before, after):
     # 休憩室に入ったら、開始時間を記録（何もしない）
     if after.channel and after.channel.name == "休憩室":
         rest_start_times[name] = now
-        return
 
     # 休憩室から出たら、累積休憩時間に加算
     if before.channel and before.channel.name == "休憩室":
@@ -225,7 +224,22 @@ async def on_voice_state_update(member, before, after):
             msg += f"\n\n勤務時間\n{format_duration(work_duration)}"
     
         send_slack_message(msg)
+        
+    # スレッド返信（Slack投稿反映待ち）
+    time.sleep(3)
+    slack_user_id = get_slack_user_id(name)
+    thread_msg = (f"<@{slack_user_id}>\n"
+                  f"以下のテンプレを <#{DAILY_REPORT_CHANNEL_ID}> に記載してください：\n"
+                  "◆日報一言テンプレート\n"
+                  "やったこと\n・\n次にやること\n・\nひとこと\n・")
     
+    # Slackに投稿したメッセージにスレッドで返信
+    result_ts = send_slack_message(msg)
+    if result_ts:
+        send_slack_message(thread_msg, thread_ts=result_ts, use_daily_channel=False)
+    else:
+        send_slack_message(thread_msg, use_daily_channel=False)
+        
         # スプレッドシート
         send_to_spreadsheet(
             name=name,
