@@ -37,33 +37,33 @@ def format_duration(seconds):
     minutes = minutes % 60
     return f"{hours:02d}:{minutes:02d}"
 
-def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_duration=None, rest_duration=None):
-    print(f"[SEND] Spreadsheet: {name} - {status}")
-    webhook_url = WEBHOOK_URLS.get(name)
-    if not webhook_url:
-        print(f"Webhook URL が未設定: {name}")
-        return
-    try:
-        payload = {
-            "date": datetime.datetime.now(JST).strftime("%Y-%m-%d"),
-            "status": status,
-            "clock_in": clock_in.strftime("%H:%M:%S") if clock_in else "",
-            "clock_out": clock_out.strftime("%H:%M:%S") if clock_out else "",
-            "work_duration": work_duration or "",
-            "rest_duration": format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else rest_duration or "",
-        }
-        response = requests.post(webhook_url, json=payload)
-        print(f"Webhook送信: {response.status_code} → {name}")
-    except Exception as e:
-        print(f"スプレッドシート送信失敗 → {name}: {e}")
+# def send_to_spreadsheet(name, status, clock_in=None, clock_out=None, work_duration=None, rest_duration=None):
+#     print(f"[SEND] Spreadsheet: {name} - {status}")
+#     webhook_url = WEBHOOK_URLS.get(name)
+#     if not webhook_url:
+#         print(f"Webhook URL が未設定: {name}")
+#         return
+#     try:
+#         payload = {
+#             "date": datetime.datetime.now(JST).strftime("%Y-%m-%d"),
+#             "status": status,
+#             "clock_in": clock_in.strftime("%H:%M:%S") if clock_in else "",
+#             "clock_out": clock_out.strftime("%H:%M:%S") if clock_out else "",
+#             "work_duration": work_duration or "",
+#             "rest_duration": format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else rest_duration or "",
+#         }
+#         response = requests.post(webhook_url, json=payload)
+#         print(f"Webhook送信: {response.status_code} → {name}")
+#     except Exception as e:
+#         print(f"スプレッドシート送信失敗 → {name}: {e}")
 
-intents = discord.Intents.default()
-intents.voice_states = True
-intents.members = True
+# intents = discord.Intents.default()
+# intents.voice_states = True
+# intents.members = True
 
-client = discord.Client(intents=intents)
+# client = discord.Client(intents=intents)
 
-last_events = {}  # ← これを def normalize() の上などに追加
+# last_events = {}  # ← これを def normalize() の上などに追加
 
 def normalize(name):
     if not name:
@@ -197,11 +197,11 @@ async def on_voice_state_update(member, before, after):
             if not last_sent or (now - last_sent).total_seconds() >= 60:
                 msg = f"{name} が「{after.channel.name}」に出勤しました。\n出勤時間\n{timestamp}"
                 send_slack_message(msg)
-                send_to_spreadsheet(
-                    name=name,
-                    status="出勤",
-                    clock_in=now
-                )
+                # send_to_spreadsheet(
+                #     name=name,
+                #     status="出勤",
+                #     clock_in=now
+                # )
                 last_sheet_events[last_key] = now
         
         last_key = f"{name}-出勤"
@@ -252,14 +252,14 @@ async def on_voice_state_update(member, before, after):
         result_ts = send_slack_message(msg)
         
         # スプレッドシート
-        send_to_spreadsheet(
-            name=name,
-            status="退勤",
-            clock_in=clock_in,
-            clock_out=clock_out,
-            work_duration=format_duration(work_duration) if isinstance(work_duration, (int, float)) else (work_duration or ""),
-            rest_duration=format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else (rest_duration or "")
-        )
+        # send_to_spreadsheet(
+        #     name=name,
+        #     status="退勤",
+        #     clock_in=clock_in,
+        #     clock_out=clock_out,
+        #     work_duration=format_duration(work_duration) if isinstance(work_duration, (int, float)) else (work_duration or ""),
+        #     rest_duration=format_duration(rest_duration) if isinstance(rest_duration, (int, float)) else (rest_duration or "")
+        # )
                 
         # 日報テンプレートは退勤時だけ送る
         if result_ts:
