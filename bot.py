@@ -57,13 +57,13 @@ def format_duration(seconds):
 #     except Exception as e:
 #         print(f"スプレッドシート送信失敗 → {name}: {e}")
 
-# intents = discord.Intents.default()
-# intents.voice_states = True
-# intents.members = True
+intents = discord.Intents.default()
+intents.voice_states = True
+intents.members = True
 
-# client = discord.Client(intents=intents)
+client = discord.Client(intents=intents)
 
-# last_events = {}  # ← これを def normalize() の上などに追加
+last_events = {}  # ← これを def normalize() の上などに追加
 
 def normalize(name):
     if not name:
