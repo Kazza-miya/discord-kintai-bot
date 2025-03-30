@@ -70,6 +70,23 @@ def normalize(name):
         return ""
     return name.lower().replace('　', ' ').replace('・', ' ').strip()
 
+slack_user_cache = {}
+
+def build_slack_user_cache():
+    headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+    response = requests.get("https://slack.com/api/users.list", headers=headers).json()
+    
+    for member in response.get("members", []):
+        if member.get("deleted"):
+            continue
+        user_id = member.get("id")
+        profile = member.get("profile", {})
+        real_name = normalize(profile.get("real_name", ""))
+        display_name = normalize(profile.get("display_name", ""))
+        
+        # 名前でマッピング
+        slack_user_cache[real_name] = user_id
+        slack_user_cache[display_name] = user_id
 
 def send_slack_message(text,
                        mention_user_id=None,
@@ -260,22 +277,34 @@ async def on_voice_state_update(member, before, after):
 
 
 def get_slack_user_id(discord_name):
+    normalized_name = normalize(discord_name)
+
+    # ① キャッシュから探す
+    if normalized_name in slack_user_cache:
+        return slack_user_cache[normalized_name]
+
+    # ② 見つからなければAPI問い合わせ
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
-    response = requests.get("https://slack.com/api/users.list",
-                            headers=headers).json()
-    normalized_discord_name = normalize(discord_name)
+    response = requests.get("https://slack.com/api/users.list", headers=headers).json()
 
     for member in response.get("members", []):
         if member.get("deleted"):
             continue
+        user_id = member.get("id")
         profile = member.get("profile", {})
         display_name = normalize(profile.get("display_name", ""))
         real_name = normalize(profile.get("real_name", ""))
-        if (normalized_discord_name in display_name
-                or display_name in normalized_discord_name
-                or normalized_discord_name in real_name
-                or real_name in normalized_discord_name):
-            return member.get("id")
+
+        # キャッシュにも登録しておく（今後のため）
+        slack_user_cache[display_name] = user_id
+        slack_user_cache[real_name] = user_id
+
+        if (normalized_name in display_name
+                or display_name in normalized_name
+                or normalized_name in real_name
+                or real_name in normalized_name):
+            return user_id
+
     return None
 
 from flask import Flask
@@ -291,6 +320,7 @@ def run_discord_bot():
     client.run(DISCORD_TOKEN)
 
 if __name__ == '__main__':
+    build_slack_user_cache()
     # Discord Bot を別スレッドで起動
     Thread(target=run_discord_bot).start()
 
