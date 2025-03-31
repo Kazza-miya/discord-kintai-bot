@@ -70,6 +70,12 @@ def normalize(name):
         return ""
     return name.lower().replace('　', ' ').replace('・', ' ').strip()
 
+ALLOWED_USERS = [
+    normalize("井上 璃久 / Riku Inoue"),
+    normalize("平井 悠喜 / Yuki Hirai"),
+    normalize("松岡満貴 / Maki Matsuoka"),
+]
+
 slack_user_cache = {}
 
 def build_slack_user_cache():
@@ -137,6 +143,9 @@ rest_durations = {}     # 休憩の累計時間（秒）
 async def on_voice_state_update(member, before, after):
     now = datetime.datetime.now(JST)
     name = member.display_name
+    if normalize(name) not in ALLOWED_USERS:
+        print(f"[SKIP] 通知対象外ユーザー: {name}")
+        return
     timestamp = now.strftime("%Y/%m/%d %H:%M:%S")
     print(f"[LOG] Voice state update: {name}")
     print(f"[LOG] Before channel: {before.channel.name if before.channel else 'None'}")
