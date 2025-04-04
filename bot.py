@@ -315,6 +315,49 @@ def get_slack_user_id(discord_name):
             return user_id
 
     return None
+import asyncio
+
+async def monitor_voice_channels():
+    await client.wait_until_ready()
+    while not client.is_closed():
+        for guild in client.guilds:
+            for member in guild.members:
+                name = member.display_name
+                if normalize(name) not in ALLOWED_USERS:
+                    continue
+
+                # 出勤中かつ現在どのチャンネルにもいない場合 = 強制退出と判断
+                if name in clock_in_times and not member.voice:
+                    now = datetime.datetime.now(JST)
+                    timestamp = now.strftime("%Y/%m/%d %H:%M:%S")
+                    clock_out = now
+                    clock_in = clock_in_times.get(name)
+                    rest_sec = rest_durations.pop(name, 0)
+                    work_duration = "不明（出勤情報なし）"
+
+                    if clock_in:
+                        delta = clock_out - clock_in
+                        work_sec = int(delta.total_seconds() - rest_sec)
+                        work_duration = max(work_sec, 0)
+
+                    msg = f"{name} の接続が切れました（強制退勤と見なします）。\n退勤時間\n{timestamp}"
+                    if isinstance(work_duration, (int, float)):
+                        msg += f"\n\n勤務時間\n{format_duration(work_duration)}"
+
+                    result_ts = send_slack_message(msg)
+                    if result_ts:
+                        time.sleep(2)
+                        slack_user_id = get_slack_user_id(name)
+                        thread_msg = (f"<@{slack_user_id}>\n"
+                                      f"以下のテンプレを <#{DAILY_REPORT_CHANNEL_ID}> に記載してください：\n"
+                                      "◆日報一言テンプレート\n"
+                                      "やったこと\n・\n次にやること\n・\nひとこと\n・")
+                        send_slack_message(thread_msg, thread_ts=result_ts, use_daily_channel=False)
+
+                    # 出勤情報削除
+                    clock_in_times.pop(name, None)
+
+        await asyncio.sleep(15)  # 15秒ごとにチェック
 
 from flask import Flask
 from threading import Thread
@@ -326,7 +369,10 @@ def health_check():
     return 'OK'
 
 def run_discord_bot():
-    client.run(DISCORD_TOKEN)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(monitor_voice_channels())
+    loop.run_until_complete(client.start(DISCORD_TOKEN))
 
 if __name__ == '__main__':
     build_slack_user_cache()
