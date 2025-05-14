@@ -268,8 +268,14 @@ def health_check():
 def run_discord_bot():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.create_task(monitor_voice_channels())
     loop.run_until_complete(client.start(DISCORD_TOKEN))
+
+@client.event
+async def on_ready():
+    logging.info(f"{client.user} is ready. Starting monitoring task.")
+    # Client が準備できてから初めて監視タスクを登録
+    client.loop.create_task(monitor_voice_channels())
+
 
 if __name__ == "__main__":
     build_slack_user_cache()
