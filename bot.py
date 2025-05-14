@@ -49,7 +49,6 @@ def normalize(name):
 
 # 通知対象ユーザー
 ALLOWED_USERS = [
-    normalize("宮内 和貴 / Kazuki Miyauchi"),
     normalize("井上 璃久 / Riku Inoue"),
     normalize("平井 悠喜 / Yuki Hirai"),
     normalize("松岡満貴 / Maki Matsuoka"),
