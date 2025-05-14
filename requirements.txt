@@ -4,3 +4,4 @@ python-dotenv
 pytz
 flask
 gunicorn
+waitress>=2.2.0
