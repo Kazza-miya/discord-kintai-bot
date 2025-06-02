@@ -68,10 +68,10 @@ def build_slack_user_cache():
         headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
         resp = requests.get("https://slack.com/api/users.list", headers=headers, timeout=10).json()
         for m in resp.get("members", []):
-            if m.get("deleted"): 
+            if m.get("deleted"):
                 continue
             uid  = m["id"]
-            prof= m.get("profile", {})
+            prof = m.get("profile", {})
             slack_user_cache[normalize(prof.get("real_name",""))]    = uid
             slack_user_cache[normalize(prof.get("display_name",""))] = uid
         logging.info("Slack user cache built.")
@@ -81,7 +81,6 @@ def build_slack_user_cache():
 def get_slack_user_id_sync(discord_name: str):
     """
     同期処理で Slack API を呼ぶ場合のフォールバック用。
-    本実装では、できるだけキャッシュだけで済む想定です。
     """
     norm = normalize(discord_name)
     if norm in slack_user_cache:
@@ -90,10 +89,10 @@ def get_slack_user_id_sync(discord_name: str):
         headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
         resp = requests.get("https://slack.com/api/users.list", headers=headers, timeout=10).json()
         for m in resp.get("members", []):
-            if m.get("deleted"): 
+            if m.get("deleted"):
                 continue
             uid  = m["id"]
-            prof= m.get("profile", {})
+            prof = m.get("profile", {})
             slack_user_cache[normalize(prof.get("real_name",""))]    = uid
             slack_user_cache[normalize(prof.get("display_name",""))] = uid
             if norm in normalize(prof.get("real_name","")) or norm in normalize(prof.get("display_name","")):
@@ -176,10 +175,14 @@ async def on_voice_state_update(member, before, after):
 
         # 出勤処理
         if event_type == "clock_in" and name not in clock_in_times and after.channel.name != "休憩室":
+            # 休憩累積をリセット
+            rest_durations[name] = 0
+            # 出勤時刻を記録
             clock_in_times[name] = now
             last_sheet_events[f"{name}-出勤"] = now
             await send_slack_message(
-                f"{name} が「{after.channel.name}」に出勤しました。\n出勤時間\n{now.strftime('%Y/%m/%d %H:%M:%S')}"
+                f"{name} が「{after.channel.name}」に出勤しました。\n"
+                f"出勤時間\n{now.strftime('%Y/%m/%d %H:%M:%S')}"
             )
 
         # 移動処理
@@ -272,9 +275,7 @@ def run_discord_bot():
 @client.event
 async def on_ready():
     logging.info(f"{client.user} is ready. Starting monitoring task.")
-    # Client が準備できてから初めて監視タスクを登録
     client.loop.create_task(monitor_voice_channels())
-
 
 if __name__ == "__main__":
     build_slack_user_cache()
