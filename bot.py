@@ -77,6 +77,7 @@ ALLOWED_USERS = {
     normalize("井上 璃久 / Riku Inoue"),
     normalize("平井 悠喜 / Yuki Hirai"),
     normalize("松岡満貴 / Maki Matsuoka"),
+    normalize("桑名優輔 / Yusuke Kuwana"),    
 }
 
 # ─── Slack ユーザーキャッシュ ──────────────────────────────
