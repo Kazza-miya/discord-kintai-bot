@@ -1,10 +1,7 @@
 import os
-import sys
 import logging
 import asyncio
 import hashlib
-import random
-import time
 from datetime import datetime
 import pytz
 
@@ -34,7 +31,7 @@ DAILY_REPORT_CHANNEL_ID = os.getenv("DAILY_REPORT_CHANNEL_ID")
 
 if not DISCORD_TOKEN or not SLACK_BOT_TOKEN:
     logging.error("DISCORD_TOKEN か SLACK_BOT_TOKEN が設定されていません。")
-    sys.exit(1)
+    exit(1)
 
 # ─── リトライデコレータ ─────────────────────────────────────
 def retry(max_retries: int = 3, backoff_factor: float = 2.0):
@@ -49,18 +46,17 @@ def retry(max_retries: int = 3, backoff_factor: float = 2.0):
                     if attempt == max_retries:
                         logging.error(f"{func.__name__} giving up after {max_retries} attempts")
                         return None
-                    delay = backoff_factor ** (attempt - 1)
-                    jitter = random.uniform(0, delay * 0.5)
-                    await asyncio.sleep(delay + jitter)
+                    # バックオフ
+                    await asyncio.sleep(backoff_factor ** (attempt - 1))
         return wrapper
     return decorator
 
 # ─── 状態管理用変数 ───────────────────────────────────────
-last_sheet_events = {}
-clock_in_times    = {}
-rest_start_times  = {}
-rest_durations    = {}
-last_events       = {}
+last_sheet_events = {}   # 最終イベント時刻
+clock_in_times    = {}   # 出勤時刻
+rest_start_times  = {}   # 休憩開始時刻
+rest_durations    = {}   # 累積休憩時間（秒）
+last_events       = {}   # 多重発火抑制用
 
 # ─── ユーティリティ関数 ───────────────────────────────────
 def normalize(name: str) -> str:
@@ -145,6 +141,7 @@ async def send_slack_message(text, mention_user_id=None, thread_ts=None, use_dai
         ) as resp:
             data = await resp.json()
             if not data.get("ok"):
+                # Slack API エラーは例外化してリトライ
                 raise Exception(f"Slack API error: {data}")
             return data.get("ts")
 
@@ -272,11 +269,11 @@ async def monitor_voice_channels():
 
         except Exception as e:
             logging.error(f"monitor_voice_channels error: {e}")
+
         await asyncio.sleep(15)
 
 # ─── Flask アプリ（ヘルスチェック）───────────────────────
 app = Flask(__name__)
-
 @app.route("/")
 def health_check():
     return "OK"
@@ -284,54 +281,11 @@ def health_check():
 def run_discord_bot():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(_start_with_backoff())
-
-async def _start_with_backoff(
-    max_retries: int = 10,
-    initial_backoff: float = 60.0,
-):
-    """
-    Discord の .login() -> .connect() をバックオフ付きで再試行
-    """
-    backoff = initial_backoff
-    for attempt in range(1, max_retries + 1):
-        try:
-            # 認証のみ
-            await client.login(DISCORD_TOKEN)
-            # 接続 (再接続有効)
-            await client.connect(reconnect=True)
-            return
-        except discord.errors.RateLimited as e:
-            base = getattr(e, "retry_after", backoff)
-            jitter = random.uniform(0, base * 0.5)
-            delay = base + jitter
-            logging.warning(f"RateLimited({delay:.1f}s) attempt {attempt}/{max_retries}")
-            await asyncio.sleep(delay)
-        except discord.HTTPException as e:
-            if e.status == 429:
-                # セッションをクリーンアップ
-                try:
-                    await client.http.close()
-                except:
-                    pass
-                # セッションオブジェクトをリセット
-                for attr in ("session", "_session", "_HTTPClient__session"):
-                    if hasattr(client.http, attr):
-                        setattr(client.http, attr, None)
-                jitter = random.uniform(0, backoff * 0.5)
-                delay = backoff + jitter
-                logging.warning(f"HTTP 429 attempt {attempt}/{max_retries}, waiting {delay:.1f}s")
-                await asyncio.sleep(delay)
-                backoff *= 2
-            else:
-                logging.error(f"Unexpected HTTPException on login/connect: {e}")
-                raise
-    logging.error("Exceeded max login retries. Exiting Discord bot.")
-    sys.exit(1)
+    loop.run_until_complete(client.start(DISCORD_TOKEN))
 
 @client.event
 async def on_ready():
-    logging.info(f"{client.user} is ready. Starting monitor task.")
+    logging.info(f"{client.user} is ready. Starting monitoring task.")
     client.loop.create_task(monitor_voice_channels())
 
 if __name__ == "__main__":
