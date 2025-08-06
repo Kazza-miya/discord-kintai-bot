@@ -78,6 +78,7 @@ def format_duration(seconds: int) -> str:
 
 # ─── 通知対象ユーザー設定 ─────────────────────────────────
 ALLOWED_USERS = {
+    normalize("宮内 和貴 / Kazuki Miyauchi"),
     normalize("井上 璃久 / Riku Inoue"),
     normalize("平井 悠喜 / Yuki Hirai"),
     normalize("松岡満貴 / Maki Matsuoka"),
@@ -287,7 +288,7 @@ def run_discord_bot():
 
 async def _start_with_backoff(
     max_retries: int = 10,
-    initial_backoff: float = 30.0,
+    initial_backoff: float = 60.0,
 ):
     """
     Discord の .login() -> .connect() をバックオフ付きで再試行
@@ -313,6 +314,10 @@ async def _start_with_backoff(
                     await client.http.close()
                 except:
                     pass
+                # セッションオブジェクトをリセット
+                for attr in ("session", "_session", "_HTTPClient__session"):
+                    if hasattr(client.http, attr):
+                        setattr(client.http, attr, None)
                 jitter = random.uniform(0, backoff * 0.5)
                 delay = backoff + jitter
                 logging.warning(f"HTTP 429 attempt {attempt}/{max_retries}, waiting {delay:.1f}s")
