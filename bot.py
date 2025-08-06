@@ -77,7 +77,8 @@ ALLOWED_USERS = {
     normalize("井上 璃久 / Riku Inoue"),
     normalize("平井 悠喜 / Yuki Hirai"),
     normalize("松岡満貴 / Maki Matsuoka"),
-    normalize("桑名優輔 / Yusuke Kuwana"),    
+    normalize("桑名優輔 / Yusuke Kuwana"),
+    normalize("宮本 渉 / Ayumu Miyamoto"),
 }
 
 # ─── Slack ユーザーキャッシュ ──────────────────────────────
@@ -292,3 +293,4 @@ if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 5000))
     serve(app, host="0.0.0.0", port=port)
+
