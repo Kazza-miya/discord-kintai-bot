@@ -74,7 +74,6 @@ def format_duration(seconds: int) -> str:
 
 # ─── 通知対象ユーザー設定 ─────────────────────────────────
 ALLOWED_USERS = {
-    normalize("宮内 和貴 / Kazuki Miyauchi"),
     normalize("井上 璃久 / Riku Inoue"),
     normalize("平井 悠喜 / Yuki Hirai"),
     normalize("松岡満貴 / Maki Matsuoka"),
@@ -294,3 +293,4 @@ if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 5000))
     serve(app, host="0.0.0.0", port=port)
+
