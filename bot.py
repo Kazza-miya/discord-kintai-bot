@@ -1,9 +1,9 @@
 import os
+import sys
 import logging
 import asyncio
 import hashlib
 import random
-import sys
 import time
 from datetime import datetime
 import pytz
@@ -275,6 +275,7 @@ async def monitor_voice_channels():
 
 # ─── Flask アプリ（ヘルスチェック）───────────────────────
 app = Flask(__name__)
+
 @app.route("/")
 def health_check():
     return "OK"
@@ -285,8 +286,8 @@ def run_discord_bot():
     loop.run_until_complete(_start_with_backoff())
 
 async def _start_with_backoff(
-    max_retries: int = 5,
-    initial_backoff: float = 5.0,
+    max_retries: int = 10,
+    initial_backoff: float = 30.0,
 ):
     """
     Discord の .login() -> .connect() をバックオフ付きで再試行
@@ -300,15 +301,22 @@ async def _start_with_backoff(
             await client.connect(reconnect=True)
             return
         except discord.errors.RateLimited as e:
-            delay = getattr(e, "retry_after", backoff)
-            logging.warning(f"RateLimited({delay}s) attempt {attempt}/{max_retries}")
-            jitter = random.uniform(0, delay * 0.5)
-            await asyncio.sleep(delay + jitter)
+            base = getattr(e, "retry_after", backoff)
+            jitter = random.uniform(0, base * 0.5)
+            delay = base + jitter
+            logging.warning(f"RateLimited({delay:.1f}s) attempt {attempt}/{max_retries}")
+            await asyncio.sleep(delay)
         except discord.HTTPException as e:
             if e.status == 429:
-                logging.warning(f"HTTP 429 attempt {attempt}/{max_retries}, backing off {backoff}s")
+                # セッションをクリーンアップ
+                try:
+                    await client.http.close()
+                except:
+                    pass
                 jitter = random.uniform(0, backoff * 0.5)
-                await asyncio.sleep(backoff + jitter)
+                delay = backoff + jitter
+                logging.warning(f"HTTP 429 attempt {attempt}/{max_retries}, waiting {delay:.1f}s")
+                await asyncio.sleep(delay)
                 backoff *= 2
             else:
                 logging.error(f"Unexpected HTTPException on login/connect: {e}")
