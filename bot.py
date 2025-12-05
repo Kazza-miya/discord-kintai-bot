@@ -46,7 +46,6 @@ def retry(max_retries: int = 3, backoff_factor: float = 2.0):
                     if attempt == max_retries:
                         logging.error(f"{func.__name__} giving up after {max_retries} attempts")
                         return None
-                    # バックオフ
                     await asyncio.sleep(backoff_factor ** (attempt - 1))
         return wrapper
     return decorator
@@ -74,6 +73,7 @@ def format_duration(seconds: int) -> str:
 
 # ─── 通知対象ユーザー設定 ─────────────────────────────────
 ALLOWED_USERS = {
+    normalize("宮内 和貴 / Kazuki Miyauchi"),
     normalize("井上 璃久 / Riku Inoue"),
     normalize("平井 悠喜 / Yuki Hirai"),
     normalize("松岡満貴 / Maki Matsuoka"),
@@ -145,7 +145,6 @@ async def send_slack_message(text, mention_user_id=None, thread_ts=None, use_dai
         ) as resp:
             data = await resp.json()
             if not data.get("ok"):
-                # Slack API エラーは例外化してリトライ
                 raise Exception(f"Slack API error: {data}")
             return data.get("ts")
 
@@ -164,7 +163,6 @@ async def on_voice_state_update(member, before, after):
         if norm not in ALLOWED_USERS:
             return
 
-        # イベント種別判定
         event_type = None
         if not before.channel and after.channel:
             event_type = "clock_in"
@@ -175,7 +173,6 @@ async def on_voice_state_update(member, before, after):
         if not event_type:
             return
 
-        # 多重発火抑制
         key          = f"{member.id}-{event_type}"
         channel_name = (after.channel or before.channel).name
         ehash        = generate_event_hash(member.id, event_type, channel_name, now)
@@ -184,7 +181,6 @@ async def on_voice_state_update(member, before, after):
             return
         last_events[key] = {"timestamp": now, "event_hash": ehash}
 
-        # 休憩管理
         if after.channel and after.channel.name == "休憩室":
             rest_start_times[name] = now
         if before.channel and before.channel.name == "休憩室":
@@ -192,7 +188,6 @@ async def on_voice_state_update(member, before, after):
             if start:
                 rest_durations[name] = rest_durations.get(name, 0) + (now - start).total_seconds()
 
-        # 出勤処理
         if event_type == "clock_in" and name not in clock_in_times and after.channel.name != "休憩室":
             rest_durations[name] = 0
             clock_in_times[name] = now
@@ -202,14 +197,12 @@ async def on_voice_state_update(member, before, after):
                 f"出勤時間\n{now.strftime('%Y/%m/%d %H:%M:%S')}"
             )
 
-        # 移動処理
         elif event_type == "move" and name in clock_in_times:
             last = last_sheet_events.get(f"{name}-move")
             if not last or (now - last).total_seconds() >= 3:
                 last_sheet_events[f"{name}-move"] = now
                 await send_slack_message(f"{name} が「{after.channel.name}」に移動しました。")
 
-        # 退勤処理
         if event_type == "clock_out" and name in clock_in_times:
             clock_out = now
             clock_in  = clock_in_times.pop(name, None)
@@ -278,14 +271,36 @@ async def monitor_voice_channels():
 
 # ─── Flask アプリ（ヘルスチェック）───────────────────────
 app = Flask(__name__)
+
 @app.route("/")
 def health_check():
     return "OK"
 
+# ─── Discord クライアント起動（レートリミット対策付き）─────
+async def start_discord_client_with_retry():
+    backoff = 10        # 初期待機秒
+    max_backoff = 600   # 最大待機秒（10分）
+
+    while True:
+        try:
+            logging.info("Starting Discord client...")
+            await client.start(DISCORD_TOKEN)
+        except discord.HTTPException as e:
+            if getattr(e, "status", None) == 429:
+                logging.error(f"Discord login rate limited (HTTP 429). Waiting {backoff} seconds before retry.")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
+                continue
+            logging.exception("Discord HTTPException occurred. Waiting 60 seconds before retry.")
+            await asyncio.sleep(60)
+        except Exception as e:
+            logging.exception("Unexpected error in Discord client. Waiting 60 seconds before retry.")
+            await asyncio.sleep(60)
+
 def run_discord_bot():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(client.start(DISCORD_TOKEN))
+    loop.run_until_complete(start_discord_client_with_retry())
 
 @client.event
 async def on_ready():
@@ -298,8 +313,3 @@ if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 5000))
     serve(app, host="0.0.0.0", port=port)
-
-
-
-
-
