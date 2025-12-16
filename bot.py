@@ -50,12 +50,12 @@ def retry(max_retries: int = 3, backoff_factor: float = 2.0):
         return wrapper
     return decorator
 
-# ─── 状態管理用変数 ───────────────────────────────────────
-last_sheet_events = {}   # 最終イベント時刻
-clock_in_times    = {}   # 出勤時刻
-rest_start_times  = {}   # 休憩開始時刻
-rest_durations    = {}   # 累積休憩時間（秒）
-last_events       = {}   # 多重発火抑制用
+# ─── 状態管理用変数（user_idキーに統一）────────────────────
+last_sheet_events = {}   # 最終イベント時刻（key: user_id-xxx）
+clock_in_times    = {}   # 出勤時刻（key: user_id）
+rest_start_times  = {}   # 休憩開始時刻（key: user_id）
+rest_durations    = {}   # 累積休憩時間（秒）（key: user_id）
+last_events       = {}   # 多重発火抑制用（key: f"{user_id}-{event_type}"）
 
 # ─── ユーティリティ関数 ───────────────────────────────────
 def normalize(name: str) -> str:
@@ -71,18 +71,12 @@ def format_duration(seconds: int) -> str:
     minutes = minutes % 60
     return f"{hours:02d}:{minutes:02d}"
 
-# ─── 通知対象ユーザー設定 ─────────────────────────────────
-ALLOWED_USERS = {
-    normalize("井上 璃久 / Riku Inoue"),
-    normalize("平井 悠喜 / Yuki Hirai"),
-    normalize("松岡満貴 / Maki Matsuoka"),
-    normalize("桑名優輔 / Yusuke Kuwana"),
-    normalize("宮本 渉 / Ayumu Miyamoto"),
-    normalize("山口 莉玖 / Riku Yamaguchi"),
-    normalize("川畑 瑠斗 / Ryuto Kawabata"),
-    normalize("落合 歩夢 / Ayumu Ochiai"),
-    normalize("百南ひなた / Hinata Momominami"),
-    normalize("横山 橙和 / Towa Yokoyama"),
+# ─── 通知除外ユーザー（Discord user_id指定）────────────────
+BLOCKED_USER_IDS = {
+    853919733165850654,
+    807508354490040320,
+    398693490399379458,
+    1269543122078273559,
 }
 
 # ─── Slack ユーザーキャッシュ ──────────────────────────────
@@ -156,10 +150,11 @@ client = discord.Client(intents=intents)
 @client.event
 async def on_voice_state_update(member, before, after):
     try:
-        now   = datetime.now(JST)
-        name  = member.display_name
-        norm  = normalize(name)
-        if norm not in ALLOWED_USERS:
+        now  = datetime.now(JST)
+        uid  = member.id
+        name = member.display_name
+
+        if uid in BLOCKED_USER_IDS:
             return
 
         event_type = None
@@ -172,40 +167,45 @@ async def on_voice_state_update(member, before, after):
         if not event_type:
             return
 
-        key          = f"{member.id}-{event_type}"
+        key          = f"{uid}-{event_type}"
         channel_name = (after.channel or before.channel).name
-        ehash        = generate_event_hash(member.id, event_type, channel_name, now)
+        ehash        = generate_event_hash(uid, event_type, channel_name, now)
         prev         = last_events.get(key)
         if prev and (now - prev["timestamp"]).total_seconds() < 3 and prev["event_hash"] == ehash:
             return
         last_events[key] = {"timestamp": now, "event_hash": ehash}
 
+        # 休憩室の入退室（uidキー）
         if after.channel and after.channel.name == "休憩室":
-            rest_start_times[name] = now
+            rest_start_times[uid] = now
         if before.channel and before.channel.name == "休憩室":
-            start = rest_start_times.pop(name, None)
+            start = rest_start_times.pop(uid, None)
             if start:
-                rest_durations[name] = rest_durations.get(name, 0) + (now - start).total_seconds()
+                rest_durations[uid] = rest_durations.get(uid, 0) + (now - start).total_seconds()
 
-        if event_type == "clock_in" and name not in clock_in_times and after.channel.name != "休憩室":
-            rest_durations[name] = 0
-            clock_in_times[name] = now
-            last_sheet_events[f"{name}-出勤"] = now
+        # 出勤（休憩室は出勤扱いしない）
+        if event_type == "clock_in" and uid not in clock_in_times and after.channel and after.channel.name != "休憩室":
+            rest_durations[uid] = 0
+            clock_in_times[uid] = now
+            last_sheet_events[f"{uid}-clock_in"] = now
+
             await send_slack_message(
                 f"{name} が「{after.channel.name}」に出勤しました。\n"
                 f"出勤時間\n{now.strftime('%Y/%m/%d %H:%M:%S')}"
             )
 
-        elif event_type == "move" and name in clock_in_times:
-            last = last_sheet_events.get(f"{name}-move")
+        # 移動（勤務中のみ）
+        elif event_type == "move" and uid in clock_in_times and after.channel:
+            last = last_sheet_events.get(f"{uid}-move")
             if not last or (now - last).total_seconds() >= 3:
-                last_sheet_events[f"{name}-move"] = now
+                last_sheet_events[f"{uid}-move"] = now
                 await send_slack_message(f"{name} が「{after.channel.name}」に移動しました。")
 
-        if event_type == "clock_out" and name in clock_in_times:
+        # 退勤
+        if event_type == "clock_out" and uid in clock_in_times:
             clock_out = now
-            clock_in  = clock_in_times.pop(name, None)
-            rest_sec  = rest_durations.pop(name, 0)
+            clock_in  = clock_in_times.pop(uid, None)
+            rest_sec  = rest_durations.pop(uid, 0)
             work_sec  = int((clock_out - clock_in).total_seconds() - rest_sec) if clock_in else 0
 
             msg = (
@@ -216,8 +216,8 @@ async def on_voice_state_update(member, before, after):
             ts = await send_slack_message(msg)
             if ts:
                 await asyncio.sleep(2)
-                uid = await asyncio.to_thread(get_slack_user_id_sync, name)
-                mention = f"<@{uid}>\n" if uid else ""
+                slack_uid = await asyncio.to_thread(get_slack_user_id_sync, name)
+                mention = f"<@{slack_uid}>\n" if slack_uid else ""
                 thread_msg = (
                     f"{mention}以下のテンプレを <#{DAILY_REPORT_CHANNEL_ID}> に記載してください：\n"
                     "◆日報一言テンプレート\nやったこと\n・\n次にやること\n・\nひとこと\n・"
@@ -234,29 +234,31 @@ async def monitor_voice_channels():
             now = datetime.now(JST)
             for guild in client.guilds:
                 for member in guild.members:
-                    norm = normalize(member.display_name)
-                    if norm not in ALLOWED_USERS:
+                    uid  = member.id
+                    name = member.display_name
+
+                    if uid in BLOCKED_USER_IDS:
                         continue
 
-                    if member.display_name in clock_in_times and not member.voice:
-                        clock_in = clock_in_times.pop(member.display_name)
+                    if uid in clock_in_times and not member.voice:
+                        clock_in = clock_in_times.pop(uid)
                         elapsed  = (now - clock_in).total_seconds()
                         if elapsed < 60:
                             continue
 
-                        rest_sec = rest_durations.pop(member.display_name, 0)
+                        rest_sec = rest_durations.pop(uid, 0)
                         work_sec = int((now - clock_in).total_seconds() - rest_sec)
 
                         msg = (
-                            f"{member.display_name} の接続が切れました（強制退勤と見なします）。\n"
+                            f"{name} の接続が切れました（強制退勤と見なします）。\n"
                             f"退勤時間\n{now.strftime('%Y/%m/%d %H:%M:%S')}\n\n"
                             f"勤務時間\n{format_duration(work_sec)}"
                         )
                         ts = await send_slack_message(msg)
                         if ts:
                             await asyncio.sleep(2)
-                            uid = await asyncio.to_thread(get_slack_user_id_sync, member.display_name)
-                            mention = f"<@{uid}>\n" if uid else ""
+                            slack_uid = await asyncio.to_thread(get_slack_user_id_sync, name)
+                            mention = f"<@{slack_uid}>\n" if slack_uid else ""
                             thread_msg = (
                                 f"{mention}以下のテンプレを <#{DAILY_REPORT_CHANNEL_ID}> に記載してください：\n"
                                 "◆日報一言テンプレート\nやったこと\n・\n次にやること\n・\nひとこと\n・"
@@ -292,7 +294,7 @@ async def start_discord_client_with_retry():
                 continue
             logging.exception("Discord HTTPException occurred. Waiting 60 seconds before retry.")
             await asyncio.sleep(60)
-        except Exception as e:
+        except Exception:
             logging.exception("Unexpected error in Discord client. Waiting 60 seconds before retry.")
             await asyncio.sleep(60)
 
@@ -312,4 +314,3 @@ if __name__ == "__main__":
     from waitress import serve
     port = int(os.environ.get("PORT", 5000))
     serve(app, host="0.0.0.0", port=port)
-
