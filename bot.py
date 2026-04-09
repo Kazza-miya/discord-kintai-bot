@@ -28,6 +28,8 @@ DISCORD_TOKEN           = os.getenv("DISCORD_TOKEN")
 SLACK_BOT_TOKEN         = os.getenv("SLACK_BOT_TOKEN")
 SLACK_CHANNEL_ID        = os.getenv("SLACK_CHANNEL_ID")
 DAILY_REPORT_CHANNEL_ID = os.getenv("DAILY_REPORT_CHANNEL_ID")
+KINTAI_WEBHOOK_URL      = os.getenv("KINTAI_WEBHOOK_URL")      # e.g. https://your-app.vercel.app/api/discord/webhook
+KINTAI_WEBHOOK_SECRET   = os.getenv("KINTAI_WEBHOOK_SECRET")    # Bearer token for auth
 
 if not DISCORD_TOKEN or not SLACK_BOT_TOKEN:
     logging.error("DISCORD_TOKEN か SLACK_BOT_TOKEN が設定されていません。")
@@ -142,6 +144,33 @@ async def send_slack_message(text, mention_user_id=None, thread_ts=None, use_dai
                 raise Exception(f"Slack API error: {data}")
             return data.get("ts")
 
+# ─── 勤怠システム Webhook 連携 ────────────────────────────
+@retry(max_retries=2, backoff_factor=1.0)
+async def notify_kintai_webhook(event_type: str, discord_user_id: int, timestamp: datetime):
+    """勤怠管理システムに出退勤イベントを送信（DB記録用）"""
+    if not KINTAI_WEBHOOK_URL or not KINTAI_WEBHOOK_SECRET:
+        return  # 未設定時はスキップ
+    timeout = aiohttp.ClientTimeout(total=5)
+    async with aiohttp.ClientSession(timeout=timeout) as sess:
+        async with sess.post(
+            KINTAI_WEBHOOK_URL,
+            headers={
+                "Authorization": f"Bearer {KINTAI_WEBHOOK_SECRET}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "event": event_type,
+                "discordUserId": str(discord_user_id),
+                "timestamp": timestamp.isoformat(),
+                "notifySlack": False,  # Slack通知はこのBot側で行うため重複を防ぐ
+            },
+        ) as resp:
+            data = await resp.json()
+            if resp.status != 200:
+                logging.warning(f"Kintai webhook returned {resp.status}: {data}")
+            else:
+                logging.info(f"Kintai webhook OK: {event_type} for {discord_user_id}")
+
 # ─── Discord クライアント設定 ─────────────────────────────
 intents = discord.Intents.default()
 intents.voice_states = True
@@ -194,6 +223,7 @@ async def on_voice_state_update(member, before, after):
                 f"{name} が「{after.channel.name}」に出勤しました。\n"
                 f"出勤時間\n{now.strftime('%Y/%m/%d %H:%M:%S')}"
             )
+            await notify_kintai_webhook("VOICE_JOIN", uid, now)
 
         # 移動（勤務中のみ）
         elif event_type == "move" and uid in clock_in_times and after.channel:
@@ -224,6 +254,7 @@ async def on_voice_state_update(member, before, after):
                     "◆日報一言テンプレート\nやったこと\n・\n次にやること\n・\nひとこと\n・"
                 )
                 await send_slack_message(thread_msg, thread_ts=ts)
+            await notify_kintai_webhook("VOICE_LEAVE", uid, now)
 
     except Exception as e:
         logging.error(f"on_voice_state_update error: {e}")
@@ -265,6 +296,7 @@ async def monitor_voice_channels():
                                 "◆日報一言テンプレート\nやったこと\n・\n次にやること\n・\nひとこと\n・"
                             )
                             await send_slack_message(thread_msg, thread_ts=ts)
+                        await notify_kintai_webhook("VOICE_LEAVE", uid, now)
 
         except Exception as e:
             logging.error(f"monitor_voice_channels error: {e}")
