@@ -146,11 +146,19 @@ async def send_slack_message(text, mention_user_id=None, thread_ts=None, use_dai
 
 # ─── 勤怠システム Webhook 連携 ────────────────────────────
 @retry(max_retries=2, backoff_factor=1.0)
-async def notify_kintai_webhook(event_type: str, discord_user_id: int, timestamp: datetime):
+async def notify_kintai_webhook(event_type: str, discord_user_id: int, timestamp: datetime, break_seconds: int = 0):
     """勤怠管理システムに出退勤イベントを送信（DB記録用）"""
     if not KINTAI_WEBHOOK_URL or not KINTAI_WEBHOOK_SECRET:
         return  # 未設定時はスキップ
     timeout = aiohttp.ClientTimeout(total=5)
+    payload = {
+        "event": event_type,
+        "discordUserId": str(discord_user_id),
+        "timestamp": timestamp.isoformat(),
+        "notifySlack": False,
+    }
+    if event_type == "VOICE_LEAVE" and break_seconds > 0:
+        payload["breakMinutes"] = break_seconds // 60
     async with aiohttp.ClientSession(timeout=timeout) as sess:
         async with sess.post(
             KINTAI_WEBHOOK_URL,
@@ -158,12 +166,7 @@ async def notify_kintai_webhook(event_type: str, discord_user_id: int, timestamp
                 "Authorization": f"Bearer {KINTAI_WEBHOOK_SECRET}",
                 "Content-Type": "application/json",
             },
-            json={
-                "event": event_type,
-                "discordUserId": str(discord_user_id),
-                "timestamp": timestamp.isoformat(),
-                "notifySlack": False,  # Slack通知はこのBot側で行うため重複を防ぐ
-            },
+            json=payload,
         ) as resp:
             data = await resp.json()
             if resp.status != 200:
@@ -254,7 +257,7 @@ async def on_voice_state_update(member, before, after):
                     "◆日報一言テンプレート\nやったこと\n・\n次にやること\n・\nひとこと\n・"
                 )
                 await send_slack_message(thread_msg, thread_ts=ts)
-            await notify_kintai_webhook("VOICE_LEAVE", uid, now)
+            await notify_kintai_webhook("VOICE_LEAVE", uid, now, break_seconds=rest_sec)
 
     except Exception as e:
         logging.error(f"on_voice_state_update error: {e}")
@@ -296,7 +299,7 @@ async def monitor_voice_channels():
                                 "◆日報一言テンプレート\nやったこと\n・\n次にやること\n・\nひとこと\n・"
                             )
                             await send_slack_message(thread_msg, thread_ts=ts)
-                        await notify_kintai_webhook("VOICE_LEAVE", uid, now)
+                        await notify_kintai_webhook("VOICE_LEAVE", uid, now, break_seconds=rest_sec)
 
         except Exception as e:
             logging.error(f"monitor_voice_channels error: {e}")
