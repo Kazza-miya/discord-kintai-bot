@@ -57,7 +57,8 @@ last_sheet_events = {}   # 最終イベント時刻（key: user_id-xxx）
 clock_in_times    = {}   # 出勤時刻（key: user_id）
 rest_start_times  = {}   # 休憩開始時刻（key: user_id）
 rest_durations    = {}   # 累積休憩時間（秒）（key: user_id）
-last_events       = {}   # 多重発火抑制用（key: f"{user_id}-{event_type}"）
+last_events       = {}   # 多重発火抑制用（key: user_id）
+clock_in_estimated = set()  # 出勤時刻が不明な自動補完分。退勤時はwork/breakを送らずwebhook側でDB開始時刻から算出させる
 
 # ─── ユーティリティ関数 ───────────────────────────────────
 def normalize(name: str) -> str:
@@ -193,60 +194,57 @@ async def on_voice_state_update(member, before, after):
         if uid in BLOCKED_USER_IDS:
             return
 
-        event_type = None
-        if not before.channel and after.channel:
-            event_type = "clock_in"
-        elif before.channel and not after.channel:
-            event_type = "clock_out"
-        elif before.channel and after.channel and before.channel != after.channel:
-            event_type = "move"
-        if not event_type:
+        before_ch = before.channel
+        after_ch  = after.channel
+
+        # チャンネル変化が無いイベント（ミュート/画面共有/挙手等）は無視
+        if before_ch == after_ch:
             return
 
-        key          = f"{uid}-{event_type}"
-        channel_name = (after.channel or before.channel).name
-        ehash        = generate_event_hash(uid, event_type, channel_name, now)
-        prev         = last_events.get(key)
+        # 3秒以内の同一遷移の重複発火を抑制
+        ehash = generate_event_hash(
+            uid, "transition",
+            f"{before_ch.id if before_ch else 0}->{after_ch.id if after_ch else 0}", now,
+        )
+        prev = last_events.get(uid)
         if prev and (now - prev["timestamp"]).total_seconds() < 3 and prev["event_hash"] == ehash:
             return
-        last_events[key] = {"timestamp": now, "event_hash": ehash}
+        last_events[uid] = {"timestamp": now, "event_hash": ehash}
 
-        # 休憩室の入退室（uidキー）
-        if after.channel and after.channel.name == "休憩室":
+        # 休憩室の入退室（勤務中のみ休憩として加算）
+        if after_ch and after_ch.name == "休憩室":
             rest_start_times[uid] = now
-        if before.channel and before.channel.name == "休憩室":
+        if before_ch and before_ch.name == "休憩室":
             start = rest_start_times.pop(uid, None)
-            if start:
+            if start and uid in clock_in_times:
                 rest_durations[uid] = rest_durations.get(uid, 0) + (now - start).total_seconds()
 
-        # 出勤（休憩室は出勤扱いしない）
-        if event_type == "clock_in" and uid not in clock_in_times and after.channel and after.channel.name != "休憩室":
+        now_in_work = after_ch is not None and after_ch.name != "休憩室"
+
+        # 出勤: 勤務部屋に入った瞬間。新規 join だけでなく「休憩室→勤務部屋」等の"移動"でも成立させる
+        # （これが無いと最初の着地が休憩室だった日は終日打刻されない＝今回の取りこぼしの主因）
+        if now_in_work and uid not in clock_in_times:
             rest_durations[uid] = 0
             clock_in_times[uid] = now
+            clock_in_estimated.discard(uid)
             last_sheet_events[f"{uid}-clock_in"] = now
-
             await send_slack_message(
-                f"{name} が「{after.channel.name}」に出勤しました。\n"
+                f"{name} が「{after_ch.name}」に出勤しました。\n"
                 f"出勤時間\n{now.strftime('%Y/%m/%d %H:%M:%S')}"
             )
             await notify_kintai_webhook("VOICE_JOIN", uid, now)
+            return
 
-        # 移動（勤務中のみ）
-        elif event_type == "move" and uid in clock_in_times and after.channel:
-            last = last_sheet_events.get(f"{uid}-move")
-            if not last or (now - last).total_seconds() >= 3:
-                last_sheet_events[f"{uid}-move"] = now
-                await send_slack_message(f"{name} が「{after.channel.name}」に移動しました。")
-
-        # 退勤
-        if event_type == "clock_out" and uid in clock_in_times:
-            clock_out = now
+        # 退勤: 全 voice チャンネルから離脱（勤務中のみ）
+        if after_ch is None and uid in clock_in_times:
             clock_in  = clock_in_times.pop(uid, None)
+            estimated = uid in clock_in_estimated
+            clock_in_estimated.discard(uid)
             rest_sec  = rest_durations.pop(uid, 0)
-            work_sec  = int((clock_out - clock_in).total_seconds() - rest_sec) if clock_in else 0
+            work_sec  = int((now - clock_in).total_seconds() - rest_sec) if clock_in else 0
 
             msg = (
-                f"{name} が「{before.channel.name}」を退出しました。\n"
+                f"{name} が「{before_ch.name}」を退出しました。\n"
                 f"退勤時間\n{now.strftime('%Y/%m/%d %H:%M:%S')}\n\n"
                 f"勤務時間\n{format_duration(work_sec)}"
             )
@@ -260,7 +258,21 @@ async def on_voice_state_update(member, before, after):
                     "◆日報一言テンプレート\nやったこと\n・\n次にやること\n・\nひとこと\n・"
                 )
                 await send_slack_message(thread_msg, thread_ts=ts)
-            await notify_kintai_webhook("VOICE_LEAVE", uid, now, break_seconds=rest_sec, session_work_seconds=work_sec)
+            # 出勤時刻が不明（再起動後の自動補完）の時は work/break を送らず、webhook 側で
+            # DB のオープンセッション開始時刻から算出させる（短時間に誤算出されるのを防ぐ）
+            if estimated:
+                await notify_kintai_webhook("VOICE_LEAVE", uid, now)
+            else:
+                await notify_kintai_webhook("VOICE_LEAVE", uid, now, break_seconds=rest_sec, session_work_seconds=work_sec)
+            return
+
+        # 移動: voice 内のチャンネル間移動（勤務中のみ Slack 通知）
+        if before_ch and after_ch and uid in clock_in_times:
+            last = last_sheet_events.get(f"{uid}-move")
+            if not last or (now - last).total_seconds() >= 3:
+                last_sheet_events[f"{uid}-move"] = now
+                await send_slack_message(f"{name} が「{after_ch.name}」に移動しました。")
+            return
 
     except Exception as e:
         logging.error(f"on_voice_state_update error: {e}")
@@ -278,12 +290,30 @@ async def monitor_voice_channels():
                     if uid in BLOCKED_USER_IDS:
                         continue
 
-                    if uid in clock_in_times and not member.voice:
+                    voice   = member.voice
+                    in_work = voice is not None and voice.channel is not None and voice.channel.name != "休憩室"
+
+                    # リコンサイル(出勤補完): 勤務部屋に居るのに未追跡＝イベント取りこぼし/再起動。
+                    # 開始時刻は不明なので estimated 印を付け、退勤時は webhook 側でDB開始時刻から算出させる。
+                    if in_work and uid not in clock_in_times:
+                        clock_in_times[uid] = now
+                        rest_durations[uid] = 0
+                        clock_in_estimated.add(uid)
+                        last_sheet_events[f"{uid}-clock_in"] = now
+                        logging.info(f"[reconcile] auto clock-in {name} ({uid})")
+                        await notify_kintai_webhook("VOICE_JOIN", uid, now)
+                        continue
+
+                    # 強制退勤: 追跡中なのに voice から消えている（退勤イベント取りこぼし対策）
+                    if uid in clock_in_times and (voice is None or voice.channel is None):
                         clock_in = clock_in_times.pop(uid)
                         elapsed  = (now - clock_in).total_seconds()
                         if elapsed < 60:
+                            clock_in_times[uid] = clock_in   # 一時的なキャッシュ欠落の可能性 → 戻して次周期で再判定
                             continue
 
+                        estimated = uid in clock_in_estimated
+                        clock_in_estimated.discard(uid)
                         rest_sec = rest_durations.pop(uid, 0)
                         work_sec = int((now - clock_in).total_seconds() - rest_sec)
 
@@ -302,7 +332,10 @@ async def monitor_voice_channels():
                                 "◆日報一言テンプレート\nやったこと\n・\n次にやること\n・\nひとこと\n・"
                             )
                             await send_slack_message(thread_msg, thread_ts=ts)
-                        await notify_kintai_webhook("VOICE_LEAVE", uid, now, break_seconds=rest_sec, session_work_seconds=work_sec)
+                        if estimated:
+                            await notify_kintai_webhook("VOICE_LEAVE", uid, now)
+                        else:
+                            await notify_kintai_webhook("VOICE_LEAVE", uid, now, break_seconds=rest_sec, session_work_seconds=work_sec)
 
         except Exception as e:
             logging.error(f"monitor_voice_channels error: {e}")
